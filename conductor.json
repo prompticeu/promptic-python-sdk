@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "setup": "task install && cp \"$ROOT_WORKTREE_PATH/.env\" .env 2>/dev/null || cp \"$CONDUCTOR_ROOT_PATH/.env\" .env 2>/dev/null || true"
+  }
+}

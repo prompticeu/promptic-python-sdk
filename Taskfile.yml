@@ -1,0 +1,56 @@
+version: "3"
+
+silent: true
+
+tasks:
+  clean:
+    desc: Remove all generated files, caches, and data artifacts
+    cmds:
+      - find . -type f -name "*.py[co]" -delete
+      - find . -type d -name "__pycache__" -delete
+      - find . -type d -empty -delete
+      - rm -rf .*_cache
+      - rm -rf htmlcov
+
+  test:
+    desc: Run pytest tests
+    cmds:
+      - uv run pytest tests {{.CLI_ARGS}}
+
+  test-coverage:
+    desc: Report test coverage
+    cmds:
+      - uv run coverage report --ignore-errors {{.CLI_ARGS}}
+
+  lint:
+    desc: Run prek hooks on all files
+    cmds:
+      - git add --intent-to-add .
+      - prek run --all-files
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+
+  install:
+    desc: Complete project setup including dependencies and development tools
+    cmds:
+      - task: install-python-and-dependencies
+      - task: install-prek
+
+  install-python-and-dependencies:
+    desc: Install Python and project dependencies
+    run: once
+    cmds:
+      - echo "[promptic-sdk] Install python..."
+      - uv python install
+      - echo "[promptic-sdk] Install dependencies..."
+      - uv sync --all-extras
+
+  install-prek:
+    desc: Set up prek git hooks
+    run: once
+    cmds:
+      - echo "[promptic-sdk] Install git hooks..."
+      - prek install --install-hooks
