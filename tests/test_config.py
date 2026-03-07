@@ -15,6 +15,7 @@ class TestConfig:
     def test_load_config_default_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         monkeypatch.delenv("PROMPTIC_ENDPOINT", raising=False)
+        monkeypatch.setattr("promptic_sdk.cli.config._read_config_file", dict)
         config = load_config()
         assert config is not None
         assert config.endpoint == "https://app.promptic.eu"
