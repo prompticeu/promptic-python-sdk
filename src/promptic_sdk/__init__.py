@@ -1,6 +1,6 @@
 """Promptic Python SDK."""
 
-from promptic_sdk.client import PromenticClient, PrompticAPIError
+from promptic_sdk.client import AsyncPromenticClient, PromenticClient, PrompticAPIError
 from promptic_sdk.models import (
     Component,
     ComponentCreated,
@@ -37,6 +37,7 @@ from promptic_sdk.tracing import ai_component, init
 
 __version__ = "0.1.0"
 __all__ = [
+    "AsyncPromenticClient",
     "PromenticClient",
     "PrompticAPIError",
     "ai_component",
