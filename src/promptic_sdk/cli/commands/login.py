@@ -10,7 +10,7 @@ import httpx
 import typer
 from rich.console import Console
 
-from promptic_sdk.cli.config import clear_token, get_config_path, save_token
+from promptic_sdk.cli.config import clear_token, get_config_path, save_token, save_workspace
 
 console = Console()
 err_console = Console(stderr=True)
@@ -85,14 +85,12 @@ def login(
         result = token_resp.json()
 
         if "access_token" in result:
-            save_token(result["access_token"], endpoint)
+            access_token = result["access_token"]
+            save_token(access_token, endpoint)
             console.print()
             console.print("[green]Login successful![/green]")
+            _auto_select_workspace(endpoint, access_token)
             console.print(f"Configuration saved to {get_config_path()}")
-            console.print(
-                "Run [bold]promptic workspace list[/bold] to see your workspaces, "
-                "then [bold]promptic workspace select <id>[/bold] to choose one."
-            )
             return
 
         error = result.get("error", "")
@@ -110,6 +108,51 @@ def login(
             description = result.get("error_description", error)
             err_console.print(f"[red]Error:[/red] {description}")
             raise typer.Exit(1)
+
+
+def _auto_select_workspace(endpoint: str, access_token: str) -> None:
+    """Fetch workspaces and auto-select or prompt the user to pick one."""
+    try:
+        resp = httpx.get(
+            f"{endpoint.rstrip('/')}/api/v1/workspaces",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        console.print(
+            "Run [bold]promptic workspace list[/bold] to see your workspaces, "
+            "then [bold]promptic workspace select <id>[/bold] to choose one.",
+            style="dim",
+        )
+        return
+
+    workspaces = resp.json().get("data", [])
+    if not workspaces:
+        console.print("No workspaces found.", style="dim")
+        return
+
+    if len(workspaces) == 1:
+        ws = workspaces[0]
+        save_workspace(ws["id"])
+        console.print(f"Workspace [bold]{ws['name']}[/bold] selected automatically.")
+        return
+
+    # Multiple workspaces — let the user pick
+    console.print()
+    console.print("Select a workspace:")
+    for i, ws in enumerate(workspaces, 1):
+        console.print(f"  [bold]{i}[/bold]. {ws['name']} ({ws['id'][:8]}...)")
+
+    console.print()
+    while True:
+        choice = console.input(f"Enter number [1-{len(workspaces)}]: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(workspaces):
+            ws = workspaces[int(choice) - 1]
+            save_workspace(ws["id"])
+            console.print(f"Workspace [bold]{ws['name']}[/bold] selected.")
+            return
+        console.print("Invalid choice, try again.", style="red")
 
 
 def logout() -> None:

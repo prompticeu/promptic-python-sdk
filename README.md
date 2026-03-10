@@ -21,21 +21,23 @@ pip install promptic-sdk[all]          # All providers
 
 ## Quick start
 
-### 1. Configure your API key
+### 1. Authenticate
 
-Set the environment variable:
+Log in via browser (recommended for local development):
 
 ```bash
-export PROMPTIC_API_KEY="pk_..."
+promptic login
 ```
 
-Or use the CLI:
+This opens your browser for authentication, then auto-selects your workspace. Credentials are saved to `~/.promptic/config.toml`.
+
+For CI/CD or headless environments, use an API key instead:
 
 ```bash
 promptic configure
+# or set the environment variable:
+export PROMPTIC_API_KEY="pk_..."
 ```
-
-This saves your credentials to `~/.promptic/config.toml`.
 
 ### 2. Send traces
 
@@ -169,7 +171,11 @@ promptic [command] [subcommand] [options]
 
 | Command                          | Description                          |
 | -------------------------------- | ------------------------------------ |
-| `promptic configure`             | Save API key and endpoint            |
+| `promptic login`                 | Authenticate via browser (device flow) |
+| `promptic logout`                | Clear saved credentials              |
+| `promptic configure`             | Save API key and endpoint (CI/CD)    |
+| `promptic workspace list`        | List accessible workspaces           |
+| `promptic workspace select <id>` | Select a workspace                   |
 | `promptic workspace show`        | Show workspace info                  |
 | `promptic traces list`           | List recent traces                   |
 | `promptic traces get <id>`       | Get a trace with spans               |
@@ -197,12 +203,12 @@ The SDK and CLI resolve configuration in this order:
 
 1. Explicit arguments (`api_key=`, `endpoint=`)
 2. Environment variables (`PROMPTIC_API_KEY`, `PROMPTIC_ENDPOINT`)
-3. Config file (`~/.promptic/config.toml`)
+3. Config file (`~/.promptic/config.toml`, written by `promptic login` or `promptic configure`)
 
 | Variable            | Description                  | Default                   |
 | ------------------- | ---------------------------- | ------------------------- |
-| `PROMPTIC_API_KEY`  | API key (required)           | —                         |
-| `PROMPTIC_ENDPOINT` | Platform URL                 | `https://promptic.eu` |
+| `PROMPTIC_API_KEY`  | API key (for tracing & CI/CD)| —                         |
+| `PROMPTIC_ENDPOINT` | Platform URL                 | `https://promptic.eu`     |
 
 ## Development
 
