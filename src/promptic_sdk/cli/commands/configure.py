@@ -15,7 +15,7 @@ def configure(
         ..., prompt="Promptic API key", help="Your Promptic API key (pk_...)."
     ),
     endpoint: str = typer.Option(
-        "https://app.promptic.eu",
+        "https://promptic.eu",
         prompt="Promptic endpoint",
         help="Promptic platform URL.",
     ),

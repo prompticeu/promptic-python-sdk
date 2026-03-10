@@ -12,23 +12,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 observations_app = typer.Typer(help="Manage observations (training data).")
 console = Console()
 err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 def _load_from_file(path: Path) -> list[dict[str, str]]:
@@ -66,7 +54,7 @@ def list_observations(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List observations for an experiment."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_observations(experiment_id)
 
     if output_json:
@@ -142,7 +130,7 @@ def add_observations(
         if "split" not in obs:
             obs["split"] = split
 
-    with _get_client() as client:
+    with get_client() as client:
         result = client.create_observations(experiment_id, observations)
 
     if output_json:
@@ -164,7 +152,7 @@ def delete_observation(
     if not force:
         typer.confirm(f"Delete observation {observation_id}?", abort=True)
 
-    with _get_client() as client:
+    with get_client() as client:
         client.delete_observation(experiment_id, observation_id)
 
     console.print("[green]Observation deleted.[/green]")

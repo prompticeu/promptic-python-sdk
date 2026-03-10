@@ -9,23 +9,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 evaluators_app = typer.Typer(help="Manage evaluators.")
 console = Console()
-err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @evaluators_app.command("list")
@@ -34,7 +21,7 @@ def list_evaluators(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List evaluators for an experiment."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_evaluators(experiment_id)
 
     if output_json:
@@ -88,7 +75,7 @@ def add_evaluator(
         "weight": weight,
     }
 
-    with _get_client() as client:
+    with get_client() as client:
         result = client.create_evaluators(experiment_id, [evaluator])
 
     if output_json:
@@ -113,7 +100,7 @@ def delete_evaluator(
     if not force:
         typer.confirm(f"Delete evaluator {evaluator_id}?", abort=True)
 
-    with _get_client() as client:
+    with get_client() as client:
         client.delete_evaluator(experiment_id, evaluator_id)
 
     console.print("[green]Evaluator deleted.[/green]")

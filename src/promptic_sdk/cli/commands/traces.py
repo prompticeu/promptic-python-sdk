@@ -10,23 +10,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 traces_app = typer.Typer(help="Manage and inspect traces.")
 console = Console()
 err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @traces_app.command("list")
@@ -43,7 +31,7 @@ def list_traces(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List recent traces."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_traces(
             limit=limit,
             offset=offset,
@@ -98,7 +86,7 @@ def get_trace(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Get a single trace with all spans and events."""
-    with _get_client() as client:
+    with get_client() as client:
         try:
             result = client.get_trace(trace_id)
         except Exception as e:
@@ -159,7 +147,7 @@ def stats(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Show aggregated tracing statistics."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_stats(days_back=days_back)
 
     if output_json:

@@ -8,23 +8,10 @@ import sys
 import typer
 from rich.console import Console
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 deployments_app = typer.Typer(help="Manage deployments.")
 console = Console()
-err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @deployments_app.command("status")
@@ -33,7 +20,7 @@ def deployment_status(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Show current deployment for a component."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_deployment(component_id)
 
     if output_json:
@@ -61,7 +48,7 @@ def deploy(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Deploy an experiment to a component."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.deploy(component_id, experiment_id)
 
     if output_json:
@@ -81,7 +68,7 @@ def deployment_prompt(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Show the deployed prompt for a component."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_deployed_prompt(component_id)
 
     if output_json:
@@ -110,7 +97,7 @@ def undeploy(
     if not force:
         typer.confirm(f"Undeploy from component {component_id}?", abort=True)
 
-    with _get_client() as client:
+    with get_client() as client:
         client.undeploy(component_id)
 
     console.print("[green]Deployment removed.[/green]")

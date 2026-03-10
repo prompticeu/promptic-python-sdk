@@ -10,23 +10,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 experiments_app = typer.Typer(help="Manage experiments.")
 console = Console()
 err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @experiments_app.command("list")
@@ -40,7 +28,7 @@ def list_experiments(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List experiments."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_experiments(
             component_id=component_id, status=status, limit=limit, offset=offset
         )
@@ -118,7 +106,7 @@ def create_experiment(
         if not initial_prompt:
             initial_prompt = None
 
-    with _get_client() as client:
+    with get_client() as client:
         result = client.create_experiment(
             ai_component_id=component_id,
             target_model=target_model,
@@ -147,7 +135,7 @@ def get_experiment(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Get experiment details."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_experiment(experiment_id)
 
     if output_json:
@@ -197,7 +185,7 @@ def update_experiment(
         err_console.print("No updates specified.", style="yellow")
         raise typer.Exit(1)
 
-    with _get_client() as client:
+    with get_client() as client:
         result = client.update_experiment(experiment_id, **updates)
 
     if output_json:
@@ -217,7 +205,7 @@ def delete_experiment(
     if not force:
         typer.confirm(f"Delete experiment {experiment_id}?", abort=True)
 
-    with _get_client() as client:
+    with get_client() as client:
         client.delete_experiment(experiment_id)
 
     console.print("[green]Experiment deleted.[/green]")
@@ -229,7 +217,7 @@ def start_experiment(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Start a pending experiment (enqueue for training)."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.start_experiment(experiment_id)
 
     if output_json:

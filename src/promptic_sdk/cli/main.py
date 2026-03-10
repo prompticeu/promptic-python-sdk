@@ -13,6 +13,7 @@ from promptic_sdk.cli.commands.deployments import deployments_app
 from promptic_sdk.cli.commands.evaluators import evaluators_app
 from promptic_sdk.cli.commands.experiments import experiments_app
 from promptic_sdk.cli.commands.iterations import iterations_app
+from promptic_sdk.cli.commands.login import login, logout
 from promptic_sdk.cli.commands.observations import observations_app
 from promptic_sdk.cli.commands.traces import traces_app
 from promptic_sdk.cli.commands.workspace import workspace_app
@@ -23,6 +24,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+app.command("login")(login)
+app.command("logout")(logout)
 app.command("configure")(configure)
 app.add_typer(traces_app, name="traces")
 app.add_typer(workspace_app, name="workspace")

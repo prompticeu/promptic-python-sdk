@@ -40,7 +40,7 @@ class TestInit:
 
         mock_exporter.assert_called_once()
         call_kwargs = mock_exporter.call_args[1]
-        assert call_kwargs["endpoint"] == "https://app.promptic.eu/api/v1/traces"
+        assert call_kwargs["endpoint"] == "https://promptic.eu/api/v1/traces"
         assert call_kwargs["headers"]["Authorization"] == "Bearer pk_test_key"
 
     def test_init_custom_endpoint(self, monkeypatch):

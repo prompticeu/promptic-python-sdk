@@ -30,7 +30,7 @@ from promptic_sdk.models import (
     Workspace,
 )
 
-_DEFAULT_ENDPOINT = "https://app.promptic.eu"
+_DEFAULT_ENDPOINT = "https://promptic.eu"
 
 
 class PrompticAPIError(Exception):
@@ -54,12 +54,18 @@ class PromenticClient:
 
     Args:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
+        access_token: Session token from device auth login. Falls back to
+            ``PROMPTIC_ACCESS_TOKEN`` env var.
+        workspace_id: Workspace ID for session-based auth. Falls back to
+            ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
-            then to ``https://app.promptic.eu``.
+            then to ``https://promptic.eu``.
         timeout: HTTP request timeout in seconds.
     """
 
     api_key: str | None = None
+    access_token: str | None = None
+    workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
     _client: httpx.Client = field(init=False, repr=False)
@@ -67,10 +73,14 @@ class PromenticClient:
     def __post_init__(self) -> None:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
-        if not self.api_key:
+        self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
+        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+
+        if not self.api_key and not self.access_token:
             msg = (
-                "Promptic API key is required. "
-                "Pass api_key= or set the PROMPTIC_API_KEY environment variable."
+                "Authentication required. "
+                "Run 'promptic login' or 'promptic configure', "
+                "or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN."
             )
             raise ValueError(msg)
 
@@ -78,9 +88,17 @@ class PromenticClient:
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
 
+        auth_headers: dict[str, str] = {}
+        if self.api_key:
+            auth_headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.access_token:
+            auth_headers["Authorization"] = f"Bearer {self.access_token}"
+            if self.workspace_id:
+                auth_headers["X-Workspace-Id"] = self.workspace_id
+
         self._client = httpx.Client(
             base_url=f"{self.endpoint}/api/v1",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers=auth_headers,
             timeout=self.timeout,
         )
 
@@ -357,12 +375,18 @@ class AsyncPromenticClient:
 
     Args:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
+        access_token: Session token from device auth login. Falls back to
+            ``PROMPTIC_ACCESS_TOKEN`` env var.
+        workspace_id: Workspace ID for session-based auth. Falls back to
+            ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
-            then to ``https://app.promptic.eu``.
+            then to ``https://promptic.eu``.
         timeout: HTTP request timeout in seconds.
     """
 
     api_key: str | None = None
+    access_token: str | None = None
+    workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
     _client: httpx.AsyncClient = field(init=False, repr=False)
@@ -370,10 +394,14 @@ class AsyncPromenticClient:
     def __post_init__(self) -> None:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
-        if not self.api_key:
+        self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
+        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+
+        if not self.api_key and not self.access_token:
             msg = (
-                "Promptic API key is required. "
-                "Pass api_key= or set the PROMPTIC_API_KEY environment variable."
+                "Authentication required. "
+                "Run 'promptic login' or 'promptic configure', "
+                "or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN."
             )
             raise ValueError(msg)
 
@@ -381,9 +409,17 @@ class AsyncPromenticClient:
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
 
+        auth_headers: dict[str, str] = {}
+        if self.api_key:
+            auth_headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.access_token:
+            auth_headers["Authorization"] = f"Bearer {self.access_token}"
+            if self.workspace_id:
+                auth_headers["X-Workspace-Id"] = self.workspace_id
+
         self._client = httpx.AsyncClient(
             base_url=f"{self.endpoint}/api/v1",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers=auth_headers,
             timeout=self.timeout,
         )
 

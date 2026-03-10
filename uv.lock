@@ -545,7 +545,7 @@ wheels = [
 
 [[package]]
 name = "opentelemetry-instrumentation-langchain"
-version = "0.53.0"
+version = "0.52.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -553,9 +553,9 @@ dependencies = [
     { name = "opentelemetry-semantic-conventions" },
     { name = "opentelemetry-semantic-conventions-ai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/4a/fe6121b7cfef6ee5a5b53adb587cc2c07b8248fbaa5598c8d30fc4dd4e30/opentelemetry_instrumentation_langchain-0.53.0.tar.gz", hash = "sha256:47d9ad0baa6b3f2e44b9b31bd655b87eac2d86794dc38079d61a2eb24b747f51", size = 397027, upload-time = "2026-03-04T07:49:10.668Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/af/0727e5c75e4f7665c800b3e82370ccc1f2040693c5deb285fc479f244da4/opentelemetry_instrumentation_langchain-0.52.6.tar.gz", hash = "sha256:2645d0532555b17bb8df4035e3f01a591eeba699cb34727bfdb672dd0c71264d", size = 386260, upload-time = "2026-02-26T15:40:06.7Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/26/ea/062d10cf7f73ee74af72302ee819ab9632a20528469c740767e59c64af12/opentelemetry_instrumentation_langchain-0.53.0-py3-none-any.whl", hash = "sha256:5426917b76ffc5e9765c0b2eaac516ac7b30f70bd53bbbee51d65364ae668276", size = 26808, upload-time = "2026-03-04T07:48:35.764Z" },
+    { url = "https://files.pythonhosted.org/packages/de/50/17511f2fc831f6e6b5f3ffc42f009eb9240af16804890e7289a7990b75af/opentelemetry_instrumentation_langchain-0.52.6-py3-none-any.whl", hash = "sha256:7a843a4ba2621486a9e7796b83f49aae3abba2b11694e4c9c727b4d323cac2c8", size = 18859, upload-time = "2026-02-26T15:39:27.439Z" },
 ]
 
 [[package]]
@@ -700,7 +700,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.20.0" },
     { name = "opentelemetry-instrumentation-anthropic", marker = "extra == 'anthropic'", specifier = ">=0.30b0" },
-    { name = "opentelemetry-instrumentation-langchain", marker = "extra == 'langchain'", specifier = ">=0.30b0" },
+    { name = "opentelemetry-instrumentation-langchain", marker = "extra == 'langchain'", specifier = ">=0.30b0,!=0.53.0" },
     { name = "opentelemetry-instrumentation-openai", marker = "extra == 'openai'", specifier = ">=0.30b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "promptic-sdk", extras = ["openai", "anthropic", "langchain"], marker = "extra == 'all'" },

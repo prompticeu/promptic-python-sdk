@@ -9,24 +9,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 from promptic_sdk.models import IterationWithScores
 
 iterations_app = typer.Typer(help="View experiment iterations (results).")
 console = Console()
-err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @iterations_app.command("list")
@@ -35,7 +22,7 @@ def list_iterations(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List iterations for an experiment."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_iterations(experiment_id)
 
     if output_json:
@@ -75,7 +62,7 @@ def get_iteration(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Get an iteration with evaluator scores."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_iteration(experiment_id, iteration_id)
 
     if output_json:
@@ -92,7 +79,7 @@ def best_iteration(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Get the best-scoring iteration for an experiment."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_best_iteration(experiment_id)
 
     if output_json:

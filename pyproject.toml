@@ -19,7 +19,9 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["opentelemetry-instrumentation-openai>=0.30b0"]
 anthropic = ["opentelemetry-instrumentation-anthropic>=0.30b0"]
-langchain = ["opentelemetry-instrumentation-langchain>=0.30b0"]
+langchain = [
+    "opentelemetry-instrumentation-langchain>=0.30b0,!=0.53.0",
+]
 all = ["promptic-sdk[openai,anthropic,langchain]"]
 
 [project.scripts]

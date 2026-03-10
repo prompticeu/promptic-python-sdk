@@ -18,7 +18,7 @@ class TestConfig:
         monkeypatch.setattr("promptic_sdk.cli.config._read_config_file", dict)
         config = load_config()
         assert config is not None
-        assert config.endpoint == "https://app.promptic.eu"
+        assert config.endpoint == "https://promptic.eu"
 
     def test_load_config_returns_none_without_key(self, monkeypatch):
         monkeypatch.delenv("PROMPTIC_API_KEY", raising=False)

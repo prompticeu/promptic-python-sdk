@@ -9,23 +9,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.cli import get_client
 
 components_app = typer.Typer(help="Manage AI components.")
 console = Console()
-err_console = Console(stderr=True)
-
-
-def _get_client() -> PromenticClient:
-    config = load_config()
-    if not config:
-        err_console.print(
-            "No configuration found. Run 'promptic configure' or set PROMPTIC_API_KEY.",
-            style="red",
-        )
-        raise typer.Exit(1)
-    return PromenticClient(api_key=config.api_key, endpoint=config.endpoint)
 
 
 @components_app.command("list")
@@ -33,7 +20,7 @@ def list_components(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """List all AI components in the workspace."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.list_components()
 
     if output_json:
@@ -72,7 +59,7 @@ def create_component(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a new AI component."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.create_component(name, description=description)
 
     if output_json:
@@ -89,7 +76,7 @@ def get_component(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Get details of an AI component."""
-    with _get_client() as client:
+    with get_client() as client:
         result = client.get_component(component_id)
 
     if output_json:
@@ -113,7 +100,7 @@ def delete_component(
     if not force:
         typer.confirm(f"Delete component {component_id}?", abort=True)
 
-    with _get_client() as client:
+    with get_client() as client:
         client.delete_component(component_id)
 
     console.print("[green]Component deleted.[/green]")

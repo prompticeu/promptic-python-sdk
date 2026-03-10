@@ -8,7 +8,7 @@ from promptic_sdk.client import AsyncPromenticClient, PromenticClient
 
 class TestPromenticClient:
     def test_requires_api_key(self):
-        with pytest.raises(ValueError, match="API key is required"):
+        with pytest.raises(ValueError, match="Authentication required"):
             PromenticClient(api_key=None)
 
     def test_reads_api_key_from_env(self, monkeypatch):
@@ -28,7 +28,7 @@ class TestPromenticClient:
     def test_default_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         client = PromenticClient()
-        assert client.endpoint == "https://app.promptic.eu"
+        assert client.endpoint == "https://promptic.eu"
         client.close()
 
     def test_context_manager(self, monkeypatch):
@@ -49,7 +49,7 @@ class TestPromenticClient:
 
             client._client = httpx.Client(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
@@ -68,7 +68,7 @@ class TestPromenticClient:
 
             client._client = httpx.Client(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
@@ -92,7 +92,7 @@ class TestPromenticClient:
 
             client._client = httpx.Client(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
@@ -108,7 +108,7 @@ class TestPromenticClient:
 
 class TestAsyncPromenticClient:
     def test_requires_api_key(self):
-        with pytest.raises(ValueError, match="API key is required"):
+        with pytest.raises(ValueError, match="Authentication required"):
             AsyncPromenticClient(api_key=None)
 
     def test_reads_api_key_from_env(self, monkeypatch):
@@ -125,7 +125,7 @@ class TestAsyncPromenticClient:
     def test_default_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         client = AsyncPromenticClient()
-        assert client.endpoint == "https://app.promptic.eu"
+        assert client.endpoint == "https://promptic.eu"
 
     async def test_context_manager(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
@@ -145,7 +145,7 @@ class TestAsyncPromenticClient:
 
             client._client = httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
@@ -164,7 +164,7 @@ class TestAsyncPromenticClient:
 
             client._client = httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
@@ -188,7 +188,7 @@ class TestAsyncPromenticClient:
 
             client._client = httpx.AsyncClient(
                 transport=httpx.MockTransport(handler),
-                base_url="https://app.promptic.eu/api/v1",
+                base_url="https://promptic.eu/api/v1",
                 headers={"Authorization": "Bearer pk_test"},
             )
 
