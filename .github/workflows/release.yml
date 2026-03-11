@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Bump, Build & Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install uv and dependencies
+        uses: ./.github/actions/setup-backend
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and update changelog
+        id: bump
+        run: |
+          uv run cz bump --changelog --yes 2>&1 || {
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No version bump needed — no conventional commits since last tag."
+            exit 0
+          }
+          VERSION=$(uv run cz version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push version commit and tag
+        if: steps.bump.outputs.skip != 'true'
+        run: git push origin HEAD --follow-tags
+
+      - name: Build package
+        if: steps.bump.outputs.skip != 'true'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.bump.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Extract changelog for this release
+        if: steps.bump.outputs.skip != 'true'
+        id: changelog
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          BODY=$(sed -n "/^## v\{0,1\}${VERSION}/,/^## /{/^## v\{0,1\}${VERSION}/d;/^## /d;p}" CHANGELOG.md)
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "body<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: v${{ steps.bump.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: dist/*
