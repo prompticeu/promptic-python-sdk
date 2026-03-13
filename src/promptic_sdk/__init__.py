@@ -2,9 +2,16 @@
 
 from promptic_sdk.client import AsyncPromenticClient, PromenticClient, PrompticAPIError
 from promptic_sdk.models import (
+    AgentEvaluation,
+    AgentEvaluationList,
+    AgentEvaluationStatus,
     Component,
     ComponentCreated,
     ComponentList,
+    Dataset,
+    DatasetItem,
+    DatasetList,
+    DatasetWithItems,
     DeployedPrompt,
     Deployment,
     DeploymentCreated,
@@ -16,6 +23,9 @@ from promptic_sdk.models import (
     ExperimentStarted,
     ExperimentStatus,
     Hyperparameters,
+    Insight,
+    InsightResult,
+    InsightResultMeta,
     Iteration,
     IterationList,
     IterationScore,
@@ -33,7 +43,7 @@ from promptic_sdk.models import (
     TracingStats,
     Workspace,
 )
-from promptic_sdk.tracing import ai_component, init
+from promptic_sdk.tracing import ai_component, dataset, init
 
 __version__ = "0.1.0"
 __all__ = [
@@ -41,11 +51,19 @@ __all__ = [
     "PromenticClient",
     "PrompticAPIError",
     "ai_component",
+    "dataset",
     "init",
     # Models
+    "AgentEvaluation",
+    "AgentEvaluationList",
+    "AgentEvaluationStatus",
     "Component",
     "ComponentCreated",
     "ComponentList",
+    "Dataset",
+    "DatasetItem",
+    "DatasetList",
+    "DatasetWithItems",
     "DeployedPrompt",
     "Deployment",
     "DeploymentCreated",
@@ -57,6 +75,9 @@ __all__ = [
     "ExperimentStarted",
     "ExperimentStatus",
     "Hyperparameters",
+    "Insight",
+    "InsightResult",
+    "InsightResultMeta",
     "Iteration",
     "IterationList",
     "IterationScore",

@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from promptic_sdk.models import (
+    AgentEvaluation,
+    AgentEvaluationList,
+    Annotation,
+    AnnotationList,
     Component,
     ComponentCreated,
     ComponentList,
+    Dataset,
+    DatasetList,
+    DatasetWithItems,
     DeployedPrompt,
     Deployment,
     DeploymentCreated,
@@ -24,6 +32,9 @@ from promptic_sdk.models import (
     IterationWithScores,
     Observation,
     ObservationList,
+    Run,
+    RunList,
+    RunWithTraces,
     Trace,
     TraceList,
     TracingStats,
@@ -88,13 +99,14 @@ class PromenticClient:
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
 
+        # Prefer session auth (access_token) over API key when both are present
         auth_headers: dict[str, str] = {}
-        if self.api_key:
-            auth_headers["Authorization"] = f"Bearer {self.api_key}"
-        elif self.access_token:
+        if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
             if self.workspace_id:
                 auth_headers["X-Workspace-Id"] = self.workspace_id
+        elif self.api_key:
+            auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
         self._client = httpx.Client(
             base_url=f"{self.endpoint}/api/v1",
@@ -354,6 +366,167 @@ class PromenticClient:
         """Get the deployed prompt for a component. Returns None if not deployed."""
         return self._get(f"/components/{component_id}/deployment/prompt")
 
+    # ── Datasets ─────────────────────────────────────────────────────
+
+    def create_dataset(
+        self,
+        component_id: str,
+        name: str,
+        *,
+        description: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> Dataset:
+        """Create a dataset for an AI component.
+
+        Args:
+            component_id: AI component ID.
+            name: Dataset name.
+            description: Optional description.
+            trace_ids: Optional list of trace DB IDs to include.
+        """
+        body: dict[str, Any] = {"name": name}
+        if description is not None:
+            body["description"] = description
+        if trace_ids is not None:
+            body["traceIds"] = trace_ids
+        return self._post(f"/components/{component_id}/datasets", json=body)
+
+    def list_datasets(self, component_id: str) -> DatasetList:
+        """List datasets for an AI component."""
+        return self._get(f"/components/{component_id}/datasets")
+
+    def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
+        """Get a dataset with its items."""
+        return self._get(f"/components/{component_id}/datasets/{dataset_id}")
+
+    def delete_dataset(self, component_id: str, dataset_id: str) -> None:
+        """Delete a dataset."""
+        self._delete(f"/components/{component_id}/datasets/{dataset_id}")
+
+    # ── Runs ────────────────────────────────────────────────────────
+
+    def create_run(
+        self,
+        component_id: str,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> Run:
+        """Create a run for a dataset."""
+        body: dict[str, Any] = {"datasetId": dataset_id}
+        if name is not None:
+            body["name"] = name
+        if trace_ids is not None:
+            body["traceIds"] = trace_ids
+        return self._post(f"/components/{component_id}/runs", json=body)
+
+    def list_runs(self, component_id: str) -> RunList:
+        """List runs for an AI component."""
+        return self._get(f"/components/{component_id}/runs")
+
+    def get_run(self, component_id: str, run_id: str) -> RunWithTraces:
+        """Get a run with its traces."""
+        return self._get(f"/components/{component_id}/runs/{run_id}")
+
+    def delete_run(self, component_id: str, run_id: str) -> None:
+        """Delete a run."""
+        self._delete(f"/components/{component_id}/runs/{run_id}")
+
+    # ── Annotations ─────────────────────────────────────────────────
+
+    def upsert_annotation(
+        self,
+        component_id: str,
+        run_id: str,
+        trace_db_id: str,
+        *,
+        rating: str | None = None,
+        comment: str | None = None,
+    ) -> Annotation:
+        """Create or update an annotation for a trace in a run."""
+        body: dict[str, Any] = {"traceDbId": trace_db_id}
+        if rating is not None:
+            body["rating"] = rating
+        if comment is not None:
+            body["comment"] = comment
+        return self._post(f"/components/{component_id}/runs/{run_id}/annotations", json=body)
+
+    def list_annotations(self, component_id: str, run_id: str) -> AnnotationList:
+        """List annotations for a run."""
+        return self._get(f"/components/{component_id}/runs/{run_id}/annotations")
+
+    def delete_annotation(self, component_id: str, run_id: str, annotation_id: str) -> None:
+        """Delete an annotation."""
+        self._delete(f"/components/{component_id}/runs/{run_id}/annotations/{annotation_id}")
+
+    # ── Agent Evaluations ────────────────────────────────────────────
+
+    def create_evaluation(
+        self,
+        component_id: str,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        run_id: str | None = None,
+    ) -> AgentEvaluation:
+        """Start an evaluation on a dataset.
+
+        Args:
+            component_id: AI component ID.
+            dataset_id: Dataset ID to evaluate.
+            name: Optional evaluation name.
+            run_id: Optional run ID to associate with.
+        """
+        body: dict[str, Any] = {"datasetId": dataset_id}
+        if name is not None:
+            body["name"] = name
+        if run_id is not None:
+            body["runId"] = run_id
+        return self._post(f"/components/{component_id}/evaluations", json=body)
+
+    def list_evaluations(self, component_id: str) -> AgentEvaluationList:
+        """List evaluations for an AI component."""
+        return self._get(f"/components/{component_id}/evaluations")
+
+    def get_evaluation(self, component_id: str, evaluation_id: str) -> AgentEvaluation:
+        """Get an evaluation with results."""
+        return self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
+
+    def wait_for_evaluation(
+        self,
+        component_id: str,
+        evaluation_id: str,
+        *,
+        max_wait: float = 300,
+        poll_interval: float = 2,
+    ) -> AgentEvaluation:
+        """Poll an evaluation until it reaches a terminal status.
+
+        Args:
+            component_id: AI component ID.
+            evaluation_id: Evaluation ID to poll.
+            max_wait: Maximum seconds to wait before raising TimeoutError.
+            poll_interval: Seconds between poll requests.
+
+        Returns:
+            The completed or failed evaluation.
+
+        Raises:
+            TimeoutError: If the evaluation does not finish within *max_wait* seconds.
+        """
+        deadline = time.monotonic() + max_wait
+        while True:
+            result = self.get_evaluation(component_id, evaluation_id)
+            if result["status"] in ("completed", "failed"):
+                return result
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Evaluation {evaluation_id} did not complete within {max_wait}s "
+                    f"(last status: {result['status']})"
+                )
+            time.sleep(poll_interval)
+
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def close(self) -> None:
@@ -409,13 +582,14 @@ class AsyncPromenticClient:
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
 
+        # Prefer session auth (access_token) over API key when both are present
         auth_headers: dict[str, str] = {}
-        if self.api_key:
-            auth_headers["Authorization"] = f"Bearer {self.api_key}"
-        elif self.access_token:
+        if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
             if self.workspace_id:
                 auth_headers["X-Workspace-Id"] = self.workspace_id
+        elif self.api_key:
+            auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
         self._client = httpx.AsyncClient(
             base_url=f"{self.endpoint}/api/v1",
@@ -666,6 +840,155 @@ class AsyncPromenticClient:
     async def get_deployed_prompt(self, component_id: str) -> DeployedPrompt | None:
         """Get the deployed prompt for a component. Returns None if not deployed."""
         return await self._get(f"/components/{component_id}/deployment/prompt")
+
+    # ── Datasets ─────────────────────────────────────────────────────
+
+    async def create_dataset(
+        self,
+        component_id: str,
+        name: str,
+        *,
+        description: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> Dataset:
+        """Create a dataset for an AI component."""
+        body: dict[str, Any] = {"name": name}
+        if description is not None:
+            body["description"] = description
+        if trace_ids is not None:
+            body["traceIds"] = trace_ids
+        return await self._post(f"/components/{component_id}/datasets", json=body)
+
+    async def list_datasets(self, component_id: str) -> DatasetList:
+        """List datasets for an AI component."""
+        return await self._get(f"/components/{component_id}/datasets")
+
+    async def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
+        """Get a dataset with its items."""
+        return await self._get(f"/components/{component_id}/datasets/{dataset_id}")
+
+    async def delete_dataset(self, component_id: str, dataset_id: str) -> None:
+        """Delete a dataset."""
+        await self._delete(f"/components/{component_id}/datasets/{dataset_id}")
+
+    # ── Runs ────────────────────────────────────────────────────────
+
+    async def create_run(
+        self,
+        component_id: str,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> Run:
+        """Create a run for a dataset."""
+        body: dict[str, Any] = {"datasetId": dataset_id}
+        if name is not None:
+            body["name"] = name
+        if trace_ids is not None:
+            body["traceIds"] = trace_ids
+        return await self._post(f"/components/{component_id}/runs", json=body)
+
+    async def list_runs(self, component_id: str) -> RunList:
+        """List runs for an AI component."""
+        return await self._get(f"/components/{component_id}/runs")
+
+    async def get_run(self, component_id: str, run_id: str) -> RunWithTraces:
+        """Get a run with its traces."""
+        return await self._get(f"/components/{component_id}/runs/{run_id}")
+
+    async def delete_run(self, component_id: str, run_id: str) -> None:
+        """Delete a run."""
+        await self._delete(f"/components/{component_id}/runs/{run_id}")
+
+    # ── Annotations ─────────────────────────────────────────────────
+
+    async def upsert_annotation(
+        self,
+        component_id: str,
+        run_id: str,
+        trace_db_id: str,
+        *,
+        rating: str | None = None,
+        comment: str | None = None,
+    ) -> Annotation:
+        """Create or update an annotation for a trace in a run."""
+        body: dict[str, Any] = {"traceDbId": trace_db_id}
+        if rating is not None:
+            body["rating"] = rating
+        if comment is not None:
+            body["comment"] = comment
+        return await self._post(f"/components/{component_id}/runs/{run_id}/annotations", json=body)
+
+    async def list_annotations(self, component_id: str, run_id: str) -> AnnotationList:
+        """List annotations for a run."""
+        return await self._get(f"/components/{component_id}/runs/{run_id}/annotations")
+
+    async def delete_annotation(self, component_id: str, run_id: str, annotation_id: str) -> None:
+        """Delete an annotation."""
+        await self._delete(f"/components/{component_id}/runs/{run_id}/annotations/{annotation_id}")
+
+    # ── Agent Evaluations ────────────────────────────────────────────
+
+    async def create_evaluation(
+        self,
+        component_id: str,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        run_id: str | None = None,
+    ) -> AgentEvaluation:
+        """Start an evaluation on a dataset."""
+        body: dict[str, Any] = {"datasetId": dataset_id}
+        if name is not None:
+            body["name"] = name
+        if run_id is not None:
+            body["runId"] = run_id
+        return await self._post(f"/components/{component_id}/evaluations", json=body)
+
+    async def list_evaluations(self, component_id: str) -> AgentEvaluationList:
+        """List evaluations for an AI component."""
+        return await self._get(f"/components/{component_id}/evaluations")
+
+    async def get_evaluation(self, component_id: str, evaluation_id: str) -> AgentEvaluation:
+        """Get an evaluation with results."""
+        return await self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
+
+    async def wait_for_evaluation(
+        self,
+        component_id: str,
+        evaluation_id: str,
+        *,
+        max_wait: float = 300,
+        poll_interval: float = 2,
+    ) -> AgentEvaluation:
+        """Poll an evaluation until it reaches a terminal status.
+
+        Args:
+            component_id: AI component ID.
+            evaluation_id: Evaluation ID to poll.
+            max_wait: Maximum seconds to wait before raising TimeoutError.
+            poll_interval: Seconds between poll requests.
+
+        Returns:
+            The completed or failed evaluation.
+
+        Raises:
+            TimeoutError: If the evaluation does not finish within *max_wait* seconds.
+        """
+        import asyncio
+
+        deadline = time.monotonic() + max_wait
+        while True:
+            result = await self.get_evaluation(component_id, evaluation_id)
+            if result["status"] in ("completed", "failed"):
+                return result
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Evaluation {evaluation_id} did not complete within {max_wait}s "
+                    f"(last status: {result['status']})"
+                )
+            await asyncio.sleep(poll_interval)
 
     # ── Lifecycle ────────────────────────────────────────────────────
 

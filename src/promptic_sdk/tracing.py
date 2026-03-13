@@ -21,10 +21,22 @@ logger = logging.getLogger("promptic_sdk")
 _DEFAULT_ENDPOINT = "https://promptic.eu"
 
 PROMPTIC_COMPONENT_ATTR = "promptic.ai_component"
+PROMPTIC_DATASET_ATTR = "promptic.dataset"
+PROMPTIC_RUN_ATTR = "promptic.run"
 
 # Context variable that holds the current AI component name.
 _current_component: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "promptic_ai_component", default=None
+)
+
+# Context variable that holds the current dataset name.
+_current_dataset: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_dataset", default=None
+)
+
+# Context variable that holds the current run name.
+_current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_run", default=None
 )
 
 # Instrumentors that we try to auto-detect and enable.
@@ -74,6 +86,12 @@ class _ComponentAttributeProcessor(SpanProcessor):
         name = _current_component.get()
         if name is not None:
             span.set_attribute(PROMPTIC_COMPONENT_ATTR, name)
+        ds = _current_dataset.get()
+        if ds is not None:
+            span.set_attribute(PROMPTIC_DATASET_ATTR, ds)
+        run = _current_run.get()
+        if run is not None:
+            span.set_attribute(PROMPTIC_RUN_ATTR, run)
 
     def on_end(self, span: ReadableSpan) -> None:  # noqa: D102
         pass
@@ -139,22 +157,66 @@ def init(
 
 
 @contextmanager
-def ai_component(name: str) -> Iterator[None]:
+def ai_component(
+    name: str,
+    *,
+    dataset: str | None = None,
+    run: str | None = None,
+) -> Iterator[None]:
     """Tag all spans created within this context with an AI Component name.
 
     The server matches the name against AI Components in the workspace
     and links traces accordingly.
 
+    Args:
+        name: AI Component name in the workspace.
+        dataset: Optional dataset name. When set, traces are automatically
+            added to the named dataset (created if it doesn't exist).
+        run: Optional run name. When set alongside ``dataset``, traces are
+            grouped into a named run within the dataset. Each unique run name
+            creates a separate run, allowing you to compare different
+            executions against the same dataset.
+
     Example::
 
         with promptic_sdk.ai_component("customer-support-agent"):
             response = openai_client.chat.completions.create(...)
+
+        # With dataset and run tagging:
+        with promptic_sdk.ai_component("my-agent", dataset="eval-set", run="v1-baseline"):
+            agent.run(test_input)
     """
-    token = _current_component.set(name)
+    comp_token = _current_component.set(name)
+    ds_token = _current_dataset.set(dataset) if dataset else None
+    run_token = _current_run.set(run) if run else None
     try:
         yield
     finally:
-        _current_component.reset(token)
+        _current_component.reset(comp_token)
+        if ds_token is not None:
+            _current_dataset.reset(ds_token)
+        if run_token is not None:
+            _current_run.reset(run_token)
+
+
+@contextmanager
+def dataset(name: str) -> Iterator[None]:
+    """Tag all spans created within this context with a dataset name.
+
+    Traces with a dataset attribute are automatically added to the named
+    dataset during OTLP ingestion (the dataset is created if it doesn't exist).
+
+    Can be nested inside :func:`ai_component` for composability::
+
+        with promptic_sdk.ai_component("my-agent"):
+            with promptic_sdk.dataset("eval-round-1"):
+                agent.run(test_input)
+    """
+    token = _current_dataset.set(name)
+    try:
+        yield
+    finally:
+        _current_dataset.reset(token)
 
 
 def _auto_instrument() -> None:
@@ -172,8 +234,7 @@ def _auto_instrument() -> None:
             # Distinguish "package not installed" from "package broken internally".
             # If the top-level package can be found on sys.path, the ImportError
             # is an internal compatibility issue that the user should know about.
-            top_level = module_path.rsplit(".", 1)[0]
-            if importlib.util.find_spec(top_level) is not None:
+            if importlib.util.find_spec(module_path) is not None:
                 logger.warning(
                     "Promptic: %s is installed but failed to import — "
                     "it may be incompatible with your current dependencies. "

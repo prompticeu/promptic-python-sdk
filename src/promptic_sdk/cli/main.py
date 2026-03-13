@@ -7,14 +7,18 @@ import sys
 import typer
 from rich.console import Console
 
+from promptic_sdk.cli.commands.annotations import annotations_app
 from promptic_sdk.cli.commands.components import components_app
 from promptic_sdk.cli.commands.configure import configure
+from promptic_sdk.cli.commands.datasets import datasets_app
 from promptic_sdk.cli.commands.deployments import deployments_app
+from promptic_sdk.cli.commands.evaluations import evaluations_app
 from promptic_sdk.cli.commands.evaluators import evaluators_app
 from promptic_sdk.cli.commands.experiments import experiments_app
 from promptic_sdk.cli.commands.iterations import iterations_app
 from promptic_sdk.cli.commands.login import login, logout
 from promptic_sdk.cli.commands.observations import observations_app
+from promptic_sdk.cli.commands.runs import runs_app
 from promptic_sdk.cli.commands.traces import traces_app
 from promptic_sdk.cli.commands.workspace import workspace_app
 
@@ -35,6 +39,10 @@ app.add_typer(observations_app, name="observations")
 app.add_typer(evaluators_app, name="evaluators")
 app.add_typer(iterations_app, name="iterations")
 app.add_typer(deployments_app, name="deployments")
+app.add_typer(datasets_app, name="datasets")
+app.add_typer(runs_app, name="runs")
+app.add_typer(annotations_app, name="annotations")
+app.add_typer(evaluations_app, name="evaluations")
 
 _err_console = Console(stderr=True)
 

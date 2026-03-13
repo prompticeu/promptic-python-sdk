@@ -324,3 +324,165 @@ class TracingStats(TypedDict):
     totalTokens: int
     totalCostUsd: float
     errorRate: float
+
+
+# ── Datasets ────────────────────────────────────────────────────────
+
+AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
+
+
+class DatasetItem(TypedDict):
+    """Item in an agent dataset linking to a trace."""
+
+    id: int
+    datasetId: str
+    traceDbId: str
+    input: str | None
+    output: str | None
+    createdAt: str
+
+
+class Dataset(TypedDict):
+    """Agent dataset record."""
+
+    id: str
+    name: str
+    aiComponentId: str
+    workspaceId: str
+    description: str | None
+    itemCount: int
+    traceCount: int
+    createdAt: str
+    updatedAt: str
+
+
+class DatasetWithItems(Dataset):
+    """Dataset with its items."""
+
+    items: list[DatasetItem]
+
+
+class DatasetList(TypedDict):
+    """List of datasets."""
+
+    data: list[Dataset]
+
+
+# ── Runs ────────────────────────────────────────────────────────────
+
+AnnotationRating = Literal["positive", "negative"]
+
+
+class Run(TypedDict):
+    """Agent run record — traces grouped for a dataset."""
+
+    id: str
+    name: str | None
+    datasetId: str
+    aiComponentId: str
+    workspaceId: str
+    status: str
+    traceCount: int
+    createdAt: str
+    updatedAt: str
+
+
+class RunWithTraces(Run):
+    """Run with its linked traces."""
+
+    traces: list[TraceListItem]
+
+
+class RunList(TypedDict):
+    """List of runs."""
+
+    data: list[Run]
+
+
+# ── Annotations ─────────────────────────────────────────────────────
+
+
+class Annotation(TypedDict):
+    """Annotation record — per-trace human feedback within a run."""
+
+    id: str
+    runId: str
+    traceDbId: str
+    userId: str
+    rating: str | None
+    comment: str | None
+    createdAt: str
+    updatedAt: str
+
+
+class AnnotationList(TypedDict):
+    """List of annotations."""
+
+    data: list[Annotation]
+
+
+# ── Agent Evaluations ───────────────────────────────────────────────
+
+
+class InsightDetail(TypedDict, total=False):
+    """Detail fields for an insight (varies by type)."""
+
+    toolName: str
+    errorRate: float
+    tokensWasted: int
+    stepIndex: int
+    costPercentage: float
+    usageRate: float
+
+
+class Insight(TypedDict):
+    """A single evaluation insight."""
+
+    type: str
+    severity: str
+    title: str
+    description: str
+    frequency: float
+    affectedRunIds: list[str]
+    details: dict[str, Any]
+    suggestedFix: str | None
+
+
+class InsightResultMeta(TypedDict):
+    """Metadata for an insight result."""
+
+    totalRuns: int
+    totalTokens: int
+    totalCostUsd: float
+    averageDurationMs: float
+    errorRate: float
+    analyzedAt: str
+
+
+class InsightResult(TypedDict):
+    """Full insight result from an evaluation."""
+
+    insights: list[Insight]
+    meta: InsightResultMeta
+
+
+class AgentEvaluation(TypedDict):
+    """Agent evaluation record."""
+
+    id: str
+    name: str | None
+    aiComponentId: str
+    datasetId: str
+    runId: str | None
+    status: AgentEvaluationStatus
+    results: InsightResult | None
+    startedAt: str | None
+    completedAt: str | None
+    createdAt: str
+    updatedAt: str
+
+
+class AgentEvaluationList(TypedDict):
+    """List of agent evaluations."""
+
+    data: list[AgentEvaluation]
