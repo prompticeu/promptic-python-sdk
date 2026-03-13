@@ -453,8 +453,12 @@ class PromenticClient:
         return self._post(f"/components/{component_id}/runs/{run_id}/annotations", json=body)
 
     def list_annotations(self, component_id: str, run_id: str) -> AnnotationList:
-        """List annotations for a run."""
+        """List annotations for a run (includes all annotations across runs of the same dataset)."""
         return self._get(f"/components/{component_id}/runs/{run_id}/annotations")
+
+    def list_dataset_annotations(self, component_id: str, dataset_id: str) -> AnnotationList:
+        """List all annotations for traces across all runs of a dataset."""
+        return self._get(f"/components/{component_id}/datasets/{dataset_id}/annotations")
 
     def delete_annotation(self, component_id: str, run_id: str, annotation_id: str) -> None:
         """Delete an annotation."""
@@ -921,8 +925,12 @@ class AsyncPromenticClient:
         return await self._post(f"/components/{component_id}/runs/{run_id}/annotations", json=body)
 
     async def list_annotations(self, component_id: str, run_id: str) -> AnnotationList:
-        """List annotations for a run."""
+        """List annotations for a run (includes all annotations across runs of the same dataset)."""
         return await self._get(f"/components/{component_id}/runs/{run_id}/annotations")
+
+    async def list_dataset_annotations(self, component_id: str, dataset_id: str) -> AnnotationList:
+        """List all annotations for traces across all runs of a dataset."""
+        return await self._get(f"/components/{component_id}/datasets/{dataset_id}/annotations")
 
     async def delete_annotation(self, component_id: str, run_id: str, annotation_id: str) -> None:
         """Delete an annotation."""

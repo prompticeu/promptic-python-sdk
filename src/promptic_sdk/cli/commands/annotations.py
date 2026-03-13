@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from promptic_sdk.cli import get_client
+from promptic_sdk.models import Annotation
 
 annotations_app = typer.Typer(help="Manage trace annotations.")
 console = Console()
@@ -51,27 +52,13 @@ def create_annotation(
         console.print(f"  Comment: {result['comment']}")
 
 
-@annotations_app.command("list")
-def list_annotations(
-    component_id: str = typer.Option(..., "--component", help="AI Component ID."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
-    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
-) -> None:
-    """List annotations for a run."""
-    with get_client() as client:
-        result = client.list_annotations(component_id, run_id)
-
-    if output_json:
-        json.dump(result, sys.stdout, indent=2, default=str)
-        sys.stdout.write("\n")
-        return
-
-    annotations = result["data"]
+def _print_annotations_table(annotations: list[Annotation], title: str) -> None:
+    """Shared helper to print an annotations table."""
     if not annotations:
         console.print("No annotations found.", style="dim")
         return
 
-    table = Table(title=f"Annotations ({len(annotations)})")
+    table = Table(title=title)
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Trace ID")
     table.add_column("Rating")
@@ -88,6 +75,43 @@ def list_annotations(
         )
 
     console.print(table)
+
+
+@annotations_app.command("list")
+def list_annotations(
+    component_id: str = typer.Option(..., "--component", help="AI Component ID."),
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run", help="Run ID (includes all annotations from the dataset)."),
+    ] = None,
+    dataset_id: Annotated[
+        str | None,
+        typer.Option("--dataset", help="Dataset ID (all annotations across runs)."),
+    ] = None,
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """List annotations for a run or dataset.
+
+    When using --run, returns all annotations across all runs of the same dataset.
+    When using --dataset, returns all annotations for traces in any run of that dataset.
+    """
+    if not run_id and not dataset_id:
+        err_console.print("[red]Provide --run or --dataset.[/red]")
+        raise typer.Exit(1)
+
+    with get_client() as client:
+        if dataset_id:
+            result = client.list_dataset_annotations(component_id, dataset_id)
+        else:
+            result = client.list_annotations(component_id, run_id)  # type: ignore[arg-type]
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    annotations = result["data"]
+    _print_annotations_table(annotations, f"Annotations ({len(annotations)})")
 
 
 @annotations_app.command("delete")
