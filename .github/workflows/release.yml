@@ -124,4 +124,6 @@ jobs:
           tag_name: v${{ steps.bump.outputs.version }}
           name: v${{ steps.bump.outputs.version }}
           body: ${{ steps.changelog.outputs.body }}
-          files: dist/*
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
