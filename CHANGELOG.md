@@ -6,6 +6,30 @@
 
 ## Features
 
+- Added automated release workflow with PyPI publishing for seamless releases.
+- Introduced AsyncPrompticClient for asynchronous operations.
+- Added support for typed models, new CLI commands, and deployed prompt management.
+- Implemented dataset-level annotation listing.
+- Added CLI commands for managing runs, annotations, and evaluations.
+- CLI now can auto-select a workspace after login.
+- Improved tracing capabilities, CLI login experience, and updated default endpoint.
+- Enhanced SDK with a deep agent example, LangSmith OTel bridge, and PyPI-based dependency installs.
+
+## Bug Fixes
+
+- Fixed YAML input parsing and lockfile synchronization in release workflow.
+- Corrected release notes and workflow YAML parsing issues.
+- Renamed PromenticClient to PrompticClient and cleaned up unused CLI parameters.
+- In tracing, handled ModuleNotFoundError in auto-instrumentation.
+- Mocked config file in default endpoint test to improve testing reliability.
+
+
+## v4.13.9 (2026-03-18)
+
+# promptic-sdk v4.13.9 Release Notes
+
+## Features
+
 - Added automated release workflow with PyPI publishing for streamlined deployment.
 - Introduced deep agent example, LangSmith OTel bridge, and switched dependencies to PyPI installs.
 - Enabled dataset-level annotation listing for richer data management.
@@ -21,4 +45,3 @@
 - Fixed YAML parsing issues in release notes and release workflow.
 - Resolved lockfile synchronization and YAML input handling in release workflow.
 - Renamed PromenticClient to PrompticClient and removed unused
-
