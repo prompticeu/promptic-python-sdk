@@ -7,7 +7,7 @@ import contextvars
 import logging
 import os
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 
 from opentelemetry import trace
 from opentelemetry.context import Context
@@ -152,8 +152,38 @@ def init(
     # Ensure all spans are flushed when the process exits.
     atexit.register(provider.shutdown)
 
+    _configure_langsmith_otel()
+
     if auto_instrument:
         _auto_instrument()
+
+
+def _langsmith_tracing_context(
+    component: str,
+    dataset: str | None,
+    run: str | None,
+) -> AbstractContextManager | None:
+    """Return a ``langsmith.tracing_context`` if available, else ``None``.
+
+    Injects Promptic attributes into LangSmith run metadata so they appear
+    as span attributes when the LangSmith OTel exporter converts runs to
+    OTel spans.  Without this, LangSmith-created spans would lack the
+    ``promptic.ai_component`` / ``promptic.dataset`` / ``promptic.run``
+    attributes needed to link traces to AI components.
+    """
+    if os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() != "true":
+        return None
+    try:
+        from langsmith import tracing_context
+    except ImportError:
+        return None
+
+    metadata: dict[str, str] = {PROMPTIC_COMPONENT_ATTR: component}
+    if dataset:
+        metadata[PROMPTIC_DATASET_ATTR] = dataset
+    if run:
+        metadata[PROMPTIC_RUN_ATTR] = run
+    return tracing_context(metadata=metadata)
 
 
 @contextmanager
@@ -189,9 +219,18 @@ def ai_component(
     comp_token = _current_component.set(name)
     ds_token = _current_dataset.set(dataset) if dataset else None
     run_token = _current_run.set(run) if run else None
+
+    # When LangSmith OTel bridge is active, inject Promptic attributes into
+    # LangSmith run metadata so they appear as span attributes after export.
+    langsmith_ctx = _langsmith_tracing_context(name, dataset, run)
+
     try:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__enter__()
         yield
     finally:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__exit__(None, None, None)
         _current_component.reset(comp_token)
         if ds_token is not None:
             _current_dataset.reset(ds_token)
@@ -219,12 +258,94 @@ def dataset(name: str) -> Iterator[None]:
         _current_dataset.reset(token)
 
 
+def _configure_langsmith_otel() -> None:
+    """Enable LangSmith's built-in OTel exporter for LangGraph tracing.
+
+    LangGraph (used by ``langchain.agents.create_agent`` and ``deepagents``)
+    traces internally via LangSmith's run tree, not LangChain callbacks.
+    OpenLLMetry's ``LangchainInstrumentor`` cannot see these internal runs,
+    causing missing spans for nested graphs.
+
+    LangSmith ships an ``OTELExporter`` that converts its full run tree —
+    including LLM token counts, tool names, and I/O — to OTel spans.  This
+    function activates it so that LangGraph spans are exported to Promptic
+    via the already-configured ``TracerProvider``.
+
+    Behaviour by user configuration:
+
+    * **No LangSmith env vars set** — enable tracing in OTel-only mode
+      (``LANGSMITH_OTEL_ONLY=true``).  No data is sent to LangSmith servers.
+    * **``LANGSMITH_TRACING=true`` with API key** — enable hybrid mode so
+      spans go to both LangSmith *and* Promptic.
+    * **``LANGSMITH_TRACING=false``** — user explicitly opted out; don't
+      force-enable.  Fall back to OpenLLMetry instrumentors only.
+    * **``LANGSMITH_OTEL_ENABLED`` already set** — respect the user's config.
+    """
+    # Don't touch anything if the user already configured LangSmith OTel.
+    if os.environ.get("LANGSMITH_OTEL_ENABLED"):
+        logger.debug("Promptic: LANGSMITH_OTEL_ENABLED already set, skipping auto-config")
+        return
+
+    # If the user explicitly disabled LangSmith tracing, respect that.
+    tracing_var = os.environ.get("LANGSMITH_TRACING_V2") or os.environ.get("LANGSMITH_TRACING")
+    if tracing_var and tracing_var.lower() == "false":
+        logger.debug("Promptic: LangSmith tracing explicitly disabled, skipping OTel bridge")
+        return
+
+    # Check if langsmith is installed (it's a transitive dep of langchain).
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("langsmith") is None:
+            return
+    except Exception:
+        return
+
+    # Determine the mode based on whether the user has a LangSmith API key.
+    has_langsmith_key = bool(os.environ.get("LANGSMITH_API_KEY"))
+    user_has_tracing_enabled = tracing_var and tracing_var.lower() == "true"
+
+    if has_langsmith_key and user_has_tracing_enabled:
+        # Hybrid mode: send to both LangSmith and Promptic.
+        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
+        logger.debug(
+            "Promptic: enabled LangSmith OTel bridge in hybrid mode "
+            "(traces go to both LangSmith and Promptic)"
+        )
+    else:
+        # OTel-only mode: LangGraph spans go to Promptic only.
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
+        os.environ.setdefault("LANGSMITH_OTEL_ONLY", "true")
+        logger.debug(
+            "Promptic: enabled LangSmith OTel bridge in OTel-only mode "
+            "(LangGraph spans go to Promptic, nothing sent to LangSmith)"
+        )
+
+
 def _auto_instrument() -> None:
     """Try to import and enable each known instrumentor."""
     import importlib
     import importlib.util
 
+    # When LangSmith OTel bridge is active and langsmith is installed, it
+    # already exports all LangChain/LangGraph spans (including LLM calls
+    # with token counts).  Skip OpenLLMetry instrumentors to avoid duplicates.
+    langsmith_otel_active = (
+        os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
+        and importlib.util.find_spec("langsmith") is not None
+    )
+    skip_modules: set[str] = set()
+    if langsmith_otel_active:
+        skip_modules = {mod for mod, _ in _INSTRUMENTORS}
+        logger.debug(
+            "Promptic: LangSmith OTel bridge active — "
+            "skipping OpenLLMetry instrumentors (LangSmith covers all spans)"
+        )
+
     for module_path, class_name in _INSTRUMENTORS:
+        if module_path in skip_modules:
+            continue
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)

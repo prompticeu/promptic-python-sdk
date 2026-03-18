@@ -5,9 +5,6 @@
 #     "langchain>=0.4",
 #     "langchain-openai>=0.4",
 # ]
-#
-# [tool.uv.sources]
-# promptic-sdk = { path = ".." }
 # ///
 """Minimal example: LangChain agent traced with Promptic.
 
