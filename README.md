@@ -61,9 +61,9 @@ with promptic_sdk.ai_component("customer-support-agent"):
 ### 3. Use the API client
 
 ```python
-from promptic_sdk import PromenticClient
+from promptic_sdk import PrompticClient
 
-with PromenticClient() as client:
+with PrompticClient() as client:
     # List traces
     traces = client.list_traces(limit=10)
 
@@ -128,19 +128,19 @@ with promptic_sdk.ai_component("my-component"):
 
 ## API client
 
-Both a sync (`PromenticClient`) and async (`AsyncPromenticClient`) client are available. They share the same method signatures and return types.
+Both a sync (`PrompticClient`) and async (`AsyncPrompticClient`) client are available. They share the same method signatures and return types.
 
 ```python
-from promptic_sdk import PromenticClient
+from promptic_sdk import PrompticClient
 
-with PromenticClient() as client:
+with PrompticClient() as client:
     traces = client.list_traces(limit=10)
 ```
 
 ```python
-from promptic_sdk import AsyncPromenticClient
+from promptic_sdk import AsyncPrompticClient
 
-async with AsyncPromenticClient() as client:
+async with AsyncPrompticClient() as client:
     traces = await client.list_traces(limit=10)
 ```
 

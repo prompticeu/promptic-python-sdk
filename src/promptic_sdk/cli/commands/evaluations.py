@@ -73,9 +73,9 @@ def _poll_with_spinner(
     poll_interval: float = 2,
 ) -> AgentEvaluation:
     """Poll evaluation status with a Rich spinner until terminal state."""
-    from promptic_sdk.client import PromenticClient
+    from promptic_sdk.client import PrompticClient
 
-    assert isinstance(client, PromenticClient)  # noqa: S101
+    assert isinstance(client, PrompticClient)  # noqa: S101
     deadline = time.monotonic() + timeout
     with Live(Spinner("dots", text="Evaluating..."), console=err_console, transient=True):
         while True:

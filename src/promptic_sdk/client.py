@@ -60,7 +60,7 @@ class PrompticAPIError(Exception):
 
 
 @dataclass
-class PromenticClient:
+class PrompticClient:
     """Client for interacting with the Promptic platform API.
 
     Args:
@@ -537,7 +537,7 @@ class PromenticClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> PromenticClient:
+    def __enter__(self) -> PrompticClient:
         """Support use as context manager."""
         return self
 
@@ -547,7 +547,7 @@ class PromenticClient:
 
 
 @dataclass
-class AsyncPromenticClient:
+class AsyncPrompticClient:
     """Async client for interacting with the Promptic platform API.
 
     Args:
@@ -1004,7 +1004,7 @@ class AsyncPromenticClient:
         """Close the underlying HTTP client."""
         await self._client.aclose()
 
-    async def __aenter__(self) -> AsyncPromenticClient:
+    async def __aenter__(self) -> AsyncPrompticClient:
         """Support use as async context manager."""
         return self
 

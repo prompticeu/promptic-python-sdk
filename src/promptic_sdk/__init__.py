@@ -1,6 +1,6 @@
 """Promptic Python SDK."""
 
-from promptic_sdk.client import AsyncPromenticClient, PromenticClient, PrompticAPIError
+from promptic_sdk.client import AsyncPrompticClient, PrompticAPIError, PrompticClient
 from promptic_sdk.models import (
     AgentEvaluation,
     AgentEvaluationList,
@@ -47,8 +47,8 @@ from promptic_sdk.tracing import ai_component, dataset, init
 
 __version__ = "0.1.0"
 __all__ = [
-    "AsyncPromenticClient",
-    "PromenticClient",
+    "AsyncPrompticClient",
+    "PrompticClient",
     "PrompticAPIError",
     "ai_component",
     "dataset",

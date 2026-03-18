@@ -6,12 +6,12 @@ import typer
 from rich.console import Console
 
 from promptic_sdk.cli.config import load_config
-from promptic_sdk.client import PromenticClient
+from promptic_sdk.client import PrompticClient
 
 _err_console = Console(stderr=True)
 
 
-def get_client() -> PromenticClient:
+def get_client() -> PrompticClient:
     """Create an authenticated client from CLI config."""
     config = load_config()
     if not config:
@@ -20,7 +20,7 @@ def get_client() -> PromenticClient:
             style="red",
         )
         raise typer.Exit(1)
-    return PromenticClient(
+    return PrompticClient(
         api_key=config.api_key,
         access_token=config.access_token,
         workspace_id=config.workspace_id,

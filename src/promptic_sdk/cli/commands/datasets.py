@@ -22,11 +22,6 @@ def create_dataset(
     component_id: str = typer.Option(..., "--component", help="AI Component ID."),
     name: str = typer.Option(..., "--name", help="Dataset name."),
     description: Annotated[str | None, typer.Option(help="Dataset description.")] = None,
-    since: Annotated[
-        str | None,
-        typer.Option(help="Include traces from this time range (e.g. '7d', '24h', ISO date)."),
-    ] = None,
-    status: Annotated[str | None, typer.Option(help="Filter traces by status (ok/error).")] = None,
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a new dataset from traces."""

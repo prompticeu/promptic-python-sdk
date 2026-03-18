@@ -1,6 +1,6 @@
 """Verify package version and public API."""
 
-from promptic_sdk import PromenticClient, __version__, ai_component, init
+from promptic_sdk import PrompticClient, __version__, ai_component, init
 
 
 def test_version():
@@ -11,5 +11,5 @@ def test_version():
 def test_public_api():
     """Verify public API exports."""
     assert callable(init)
-    assert callable(PromenticClient)
+    assert callable(PrompticClient)
     assert callable(ai_component)

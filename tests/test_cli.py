@@ -26,13 +26,13 @@ def _mock_config_none():
 
 
 def _mock_client(module_path, method_name, return_value):
-    """Mock PromenticClient in the cli __init__ module."""
+    """Mock PrompticClient in the cli __init__ module."""
     mock_client = MagicMock()
     getattr(mock_client, method_name).return_value = return_value
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     return patch(
-        "promptic_sdk.cli.PromenticClient",
+        "promptic_sdk.cli.PrompticClient",
         return_value=mock_client,
     )
 

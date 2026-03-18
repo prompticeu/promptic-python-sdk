@@ -3,23 +3,23 @@
 import httpx
 import pytest
 
-from promptic_sdk.client import AsyncPromenticClient, PromenticClient
+from promptic_sdk.client import AsyncPrompticClient, PrompticClient
 
 
-class TestPromenticClient:
+class TestPrompticClient:
     def test_requires_api_key(self):
         with pytest.raises(ValueError, match="Authentication required"):
-            PromenticClient(api_key=None)
+            PrompticClient(api_key=None)
 
     def test_reads_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test_key")
-        client = PromenticClient()
+        client = PrompticClient()
         assert client.api_key == "pk_test_key"
         client.close()
 
     def test_custom_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = PromenticClient(endpoint="https://custom.example.com")
+        client = PrompticClient(endpoint="https://custom.example.com")
         assert client.endpoint == "https://custom.example.com"
         # httpx normalizes base_url with trailing slash
         assert str(client._client.base_url).rstrip("/") == "https://custom.example.com/api/v1"
@@ -27,20 +27,20 @@ class TestPromenticClient:
 
     def test_default_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = PromenticClient()
+        client = PrompticClient()
         assert client.endpoint == "https://promptic.eu"
         client.close()
 
     def test_context_manager(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        with PromenticClient() as client:
+        with PrompticClient() as client:
             assert client.api_key == "pk_test"
 
     def test_list_traces(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {"traces": [{"traceId": "abc123"}], "total": 1}
 
-        with PromenticClient() as client:
+        with PrompticClient() as client:
 
             def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces" in str(request.url)
@@ -60,7 +60,7 @@ class TestPromenticClient:
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {"traceId": "abc123", "spans": []}
 
-        with PromenticClient() as client:
+        with PrompticClient() as client:
 
             def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces/abc123" in str(request.url)
@@ -84,7 +84,7 @@ class TestPromenticClient:
             "errorRate": 0.05,
         }
 
-        with PromenticClient() as client:
+        with PrompticClient() as client:
 
             def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces/stats" in str(request.url)
@@ -101,42 +101,42 @@ class TestPromenticClient:
 
     def test_strips_trailing_slash(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = PromenticClient(endpoint="https://example.com/")
+        client = PrompticClient(endpoint="https://example.com/")
         assert client.endpoint == "https://example.com"
         client.close()
 
 
-class TestAsyncPromenticClient:
+class TestAsyncPrompticClient:
     def test_requires_api_key(self):
         with pytest.raises(ValueError, match="Authentication required"):
-            AsyncPromenticClient(api_key=None)
+            AsyncPrompticClient(api_key=None)
 
     def test_reads_api_key_from_env(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test_key")
-        client = AsyncPromenticClient()
+        client = AsyncPrompticClient()
         assert client.api_key == "pk_test_key"
 
     def test_custom_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = AsyncPromenticClient(endpoint="https://custom.example.com")
+        client = AsyncPrompticClient(endpoint="https://custom.example.com")
         assert client.endpoint == "https://custom.example.com"
         assert str(client._client.base_url).rstrip("/") == "https://custom.example.com/api/v1"
 
     def test_default_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = AsyncPromenticClient()
+        client = AsyncPrompticClient()
         assert client.endpoint == "https://promptic.eu"
 
     async def test_context_manager(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        async with AsyncPromenticClient() as client:
+        async with AsyncPrompticClient() as client:
             assert client.api_key == "pk_test"
 
     async def test_list_traces(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {"traces": [{"traceId": "abc123"}], "total": 1}
 
-        async with AsyncPromenticClient() as client:
+        async with AsyncPrompticClient() as client:
 
             async def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces" in str(request.url)
@@ -156,7 +156,7 @@ class TestAsyncPromenticClient:
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {"traceId": "abc123", "spans": []}
 
-        async with AsyncPromenticClient() as client:
+        async with AsyncPrompticClient() as client:
 
             async def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces/abc123" in str(request.url)
@@ -180,7 +180,7 @@ class TestAsyncPromenticClient:
             "errorRate": 0.05,
         }
 
-        async with AsyncPromenticClient() as client:
+        async with AsyncPrompticClient() as client:
 
             async def handler(request: httpx.Request) -> httpx.Response:
                 assert "/traces/stats" in str(request.url)
@@ -197,5 +197,5 @@ class TestAsyncPromenticClient:
 
     def test_strips_trailing_slash(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        client = AsyncPromenticClient(endpoint="https://example.com/")
+        client = AsyncPrompticClient(endpoint="https://example.com/")
         assert client.endpoint == "https://example.com"
