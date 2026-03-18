@@ -355,7 +355,11 @@ def _auto_instrument() -> None:
             # Distinguish "package not installed" from "package broken internally".
             # If the top-level package can be found on sys.path, the ImportError
             # is an internal compatibility issue that the user should know about.
-            if importlib.util.find_spec(module_path) is not None:
+            try:
+                is_installed = importlib.util.find_spec(module_path) is not None
+            except (ModuleNotFoundError, ValueError):
+                is_installed = False
+            if is_installed:
                 logger.warning(
                     "Promptic: %s is installed but failed to import — "
                     "it may be incompatible with your current dependencies. "
