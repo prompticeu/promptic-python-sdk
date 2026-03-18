@@ -2,6 +2,10 @@
 
 ## v4.13.9 (2026-03-18)
 
+No user-facing changes have been introduced in this release.
+
+## v4.13.9 (2026-03-18)
+
 promptic-sdk v4.13.9 Release Notes
 No changes in features, bug fixes, or improvements for this release.
 
