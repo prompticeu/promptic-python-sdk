@@ -50,8 +50,6 @@ required-version = ">=0.5.23"
 name = "cz_conventional_commits"
 version_provider = "pep621"
 version_files = ["src/promptic_sdk/__init__.py", "pyproject.toml:version"]
-update_changelog_on_bump = true
-changelog_file = "CHANGELOG.md"
 tag_format = "v$version"
 
 [build-system]
