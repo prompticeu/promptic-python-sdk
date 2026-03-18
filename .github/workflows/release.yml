@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  models: read
 
 jobs:
   release:
@@ -55,12 +56,33 @@ jobs:
         if: steps.bump.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Extract changelog for this release
+      - name: Collect commits since last release
+        if: steps.bump.outputs.skip != 'true'
+        id: commits
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          COMMITS=$(git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s')
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "list<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes with AI
+        if: steps.bump.outputs.skip != 'true'
+        id: ai
+        uses: actions/ai-inference@v1
+        with:
+          prompt-file: .github/prompts/release-notes.prompt.yml
+          input: |
+            version: ${{ steps.bump.outputs.version }}
+            commits: |
+              ${{ steps.commits.outputs.list }}
+
+      - name: Parse release notes from JSON
         if: steps.bump.outputs.skip != 'true'
         id: changelog
         run: |
-          VERSION="${{ steps.bump.outputs.version }}"
-          BODY=$(sed -n "/^## v\{0,1\}${VERSION}/,/^## /{/^## v\{0,1\}${VERSION}/d;/^## /d;p}" CHANGELOG.md)
+          BODY=$(echo '${{ steps.ai.outputs.response }}' | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "body<<$EOF" >> "$GITHUB_OUTPUT"
           echo "$BODY" >> "$GITHUB_OUTPUT"
