@@ -97,7 +97,7 @@ jobs:
           HEADER="## v${VERSION} (${DATE})"
           if [ -f CHANGELOG.md ]; then
             tail -n +2 CHANGELOG.md > /tmp/old-changelog-body.md
-            printf '# Changelog\n\n%s\n\n%s\n%s' "$HEADER" "$RELEASE_BODY" "$(cat /tmp/old-changelog-body.md)" > CHANGELOG.md
+            printf '# Changelog\n\n%s\n\n%s\n%s\n' "$HEADER" "$RELEASE_BODY" "$(cat /tmp/old-changelog-body.md)" > CHANGELOG.md
           else
             printf '# Changelog\n\n%s\n\n%s\n' "$HEADER" "$RELEASE_BODY" > CHANGELOG.md
           fi
