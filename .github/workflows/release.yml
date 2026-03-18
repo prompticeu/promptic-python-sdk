@@ -50,7 +50,7 @@ jobs:
           uv lock
           git add uv.lock
           git commit --amend --no-edit
-          VERSION=$(uv run cz version)
+          VERSION=$(uv run cz version --project)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
@@ -102,7 +102,7 @@ jobs:
             printf '# Changelog\n\n%s\n\n%s\n' "$HEADER" "$RELEASE_BODY" > CHANGELOG.md
           fi
           git add CHANGELOG.md
-          git commit -m "docs: update changelog for v${VERSION}"
+          git commit -m "docs: update changelog for v${VERSION} [skip ci]"
 
       - name: Push version commit, changelog, and tag
         if: steps.bump.outputs.skip != 'true'
