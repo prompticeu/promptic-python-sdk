@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.1 (2026-03-18)
+
+## Bug Fixes
+
+- Release assets now only include .whl and .tar.gz files, reducing unnecessary uploads.
+
 ## v0.10.0 (2026-03-18)
 
 ## Features
@@ -11,4 +17,3 @@
 - Fixed version detection mechanism.
 - Resolved cascading loop issue in the release process.
 - Reset changelog to avoid errors.
-
