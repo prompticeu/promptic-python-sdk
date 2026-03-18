@@ -40,6 +40,9 @@ jobs:
             echo "No version bump needed — no conventional commits since last tag."
             exit 0
           }
+          uv lock
+          git add uv.lock
+          git commit --amend --no-edit
           VERSION=$(uv run cz version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -58,14 +61,9 @@ jobs:
 
       - name: Collect commits since last release
         if: steps.bump.outputs.skip != 'true'
-        id: commits
         run: |
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
-          COMMITS=$(git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s')
-          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          echo "list<<$EOF" >> "$GITHUB_OUTPUT"
-          echo "$COMMITS" >> "$GITHUB_OUTPUT"
-          echo "$EOF" >> "$GITHUB_OUTPUT"
+          git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s' > /tmp/commits.txt
 
       - name: Generate release notes with AI
         if: steps.bump.outputs.skip != 'true'
@@ -75,14 +73,16 @@ jobs:
           prompt-file: .github/prompts/release-notes.prompt.yml
           input: |
             version: ${{ steps.bump.outputs.version }}
-            commits: |
-              ${{ steps.commits.outputs.list }}
+          file_input: |
+            commits: /tmp/commits.txt
 
       - name: Parse release notes from JSON
         if: steps.bump.outputs.skip != 'true'
         id: changelog
+        env:
+          AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: |
-          BODY=$(echo '${{ steps.ai.outputs.response }}' | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
+          BODY=$(printf '%s' "$AI_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "body<<$EOF" >> "$GITHUB_OUTPUT"
           echo "$BODY" >> "$GITHUB_OUTPUT"
