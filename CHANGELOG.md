@@ -2,6 +2,13 @@
 
 ## v4.13.9 (2026-03-18)
 
+promptic-sdk v4.13.9 Release Notes
+No changes in features, bug fixes, or improvements for this release.
+
+This update includes a version bump for internal dependencies.
+
+## v4.13.9 (2026-03-18)
+
 No user-facing changes in v4.13.9.
 
 ## v4.13.9 (2026-03-18)
