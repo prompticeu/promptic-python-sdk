@@ -94,15 +94,12 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          ENTRY="## v${VERSION} (${DATE})"$'\n\n'"${RELEASE_BODY}"
-          # Insert after the "# Changelog" header
+          HEADER="## v${VERSION} (${DATE})"
           if [ -f CHANGELOG.md ]; then
-            sed -i "0,/^# Changelog$/{ /^# Changelog$/a\\
-          \\
-          ${ENTRY}
-          }" CHANGELOG.md
+            tail -n +2 CHANGELOG.md > /tmp/old-changelog-body.md
+            printf '# Changelog\n\n%s\n\n%s\n%s' "$HEADER" "$RELEASE_BODY" "$(cat /tmp/old-changelog-body.md)" > CHANGELOG.md
           else
-            printf '# Changelog\n\n%s\n' "$ENTRY" > CHANGELOG.md
+            printf '# Changelog\n\n%s\n\n%s\n' "$HEADER" "$RELEASE_BODY" > CHANGELOG.md
           fi
           git add CHANGELOG.md
           git commit -m "docs: update changelog for v${VERSION}"
