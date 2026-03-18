@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+  models: read
+
+jobs:
+  release:
+    name: Bump, Build & Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install uv and dependencies
+        uses: ./.github/actions/setup-backend
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and update changelog
+        id: bump
+        run: |
+          uv run cz bump --changelog --yes 2>&1 || {
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No version bump needed — no conventional commits since last tag."
+            exit 0
+          }
+          VERSION=$(uv run cz version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push version commit and tag
+        if: steps.bump.outputs.skip != 'true'
+        run: git push origin HEAD --follow-tags
+
+      - name: Build package
+        if: steps.bump.outputs.skip != 'true'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.bump.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Collect commits since last release
+        if: steps.bump.outputs.skip != 'true'
+        id: commits
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          COMMITS=$(git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s')
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "list<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes with AI
+        if: steps.bump.outputs.skip != 'true'
+        id: ai
+        uses: actions/ai-inference@v1
+        with:
+          prompt-file: .github/prompts/release-notes.prompt.yml
+          input: |
+            version: ${{ steps.bump.outputs.version }}
+            commits: |
+              ${{ steps.commits.outputs.list }}
+
+      - name: Parse release notes from JSON
+        if: steps.bump.outputs.skip != 'true'
+        id: changelog
+        run: |
+          BODY=$(echo '${{ steps.ai.outputs.response }}' | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "body<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: v${{ steps.bump.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: dist/*
