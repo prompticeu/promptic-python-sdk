@@ -58,7 +58,7 @@ jobs:
         if: steps.bump.outputs.skip != 'true'
         run: |
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
-          git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s' > /tmp/commits.txt
+          git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'* %s' > /tmp/commits.txt
 
       - name: Generate release notes with AI
         if: steps.bump.outputs.skip != 'true'
