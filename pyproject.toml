@@ -1,0 +1,132 @@
+[project]
+requires-python = ">=3.11"
+name = "promptic-sdk"
+version = "0.1.0"
+description = "Python SDK for the Promptic platform — tracing, API client, and CLI."
+readme = "README.md"
+authors = [
+    { name = "Promptic GmbH" },
+]
+dependencies = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "httpx>=0.27.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
+    "tomli>=2.0.0;python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+openai = ["opentelemetry-instrumentation-openai>=0.30b0"]
+anthropic = ["opentelemetry-instrumentation-anthropic>=0.30b0"]
+langchain = [
+    "opentelemetry-instrumentation-langchain>=0.30b0,!=0.53.0",
+]
+all = ["promptic-sdk[openai,anthropic,langchain]"]
+
+[project.scripts]
+promptic = "promptic_sdk.cli.main:main"
+
+[dependency-groups]
+dev = []
+test = [
+    "pytest>=7.1.0",
+    "pytest-asyncio>=0.26.0",
+    "pytest-cov>=4.0",
+]
+lint = [
+    "commitizen>=2.39.1",
+    "ruff>=0.6.0",
+    "ty>=0.0.1a1",
+]
+
+[tool.uv]
+default-groups = ["dev", "test", "lint"]
+required-version = ">=0.5.23"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+version_files = ["src/promptic_sdk/__init__.py", "pyproject.toml:version"]
+
+[build-system]
+requires = ["uv_build>=0.10.0,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+fix = true
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflake
+    "I",     # isort
+    "D",     # pydocstyle
+    "C901",  # complexity
+    "N",     # pep8 naming convention
+    "UP",    # pyupgrade
+    "NPY",   # NumPy-specific rules
+    "ASYNC", # flake8-async
+    "S105",  # flake8-bandit: hardcoded-password-string
+    "S106",  # flake8-bandit: hardcoded-password-func-arg
+    "S107",  # flake8-bandit: hardcoded-password-default
+    "C4",    # flake8-comprehensions
+    "ICN",   # flake8-import-conventions
+    "PIE",   # flake8-pie
+    "RET",   # flake8-return
+    "SIM",   # flake8-simplify
+]
+ignore = [
+    "D100",   # ignore missing docstring on module level
+    "D104",   # ignore missing docstring on package level
+    "D206",   # indent with spaces, may get conflicts with ruff formatter
+    "D417",   # On top of the Google convention, disable `D417`, which requires documentation for every function parameter.
+    "E501",   # line too long, handled by ruff formatter if possible
+    "RET504", # unnecessary-assign to maintain debuggability
+    "RET505", # unnecessary-branch no autofix
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"] # ignore unused imports in __init__ file
+"tests/*" = ["D101", "D102", "D103", "D107"] # ignore missing docstring in tests
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 18
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+unresolved-import = "ignore"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = """
+--cov-report html \
+--cov src/promptic_sdk -ra"""
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
+
+[tool.coverage.paths]
+source = ["src/promptic_sdk"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/promptic_sdk"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    # Have to re-enable the standard pragma
+    "pragma: no cover",
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise NotImplementedError",
+    "raise AssertionError",
+    # Don't complain about abstract methods, they aren't run:
+    "@(abc\\.)?abstractmethod",
+]

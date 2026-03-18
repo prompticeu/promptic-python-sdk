@@ -1,0 +1,377 @@
+"""Convenience wrapper for configuring OpenTelemetry to send traces to Promptic."""
+
+from __future__ import annotations
+
+import atexit
+import contextvars
+import logging
+import os
+from collections.abc import Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
+
+from opentelemetry import trace
+from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+
+logger = logging.getLogger("promptic_sdk")
+
+_DEFAULT_ENDPOINT = "https://promptic.eu"
+
+PROMPTIC_COMPONENT_ATTR = "promptic.ai_component"
+PROMPTIC_DATASET_ATTR = "promptic.dataset"
+PROMPTIC_RUN_ATTR = "promptic.run"
+
+# Context variable that holds the current AI component name.
+_current_component: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_ai_component", default=None
+)
+
+# Context variable that holds the current dataset name.
+_current_dataset: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_dataset", default=None
+)
+
+# Context variable that holds the current run name.
+_current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_run", default=None
+)
+
+# Instrumentors that we try to auto-detect and enable.
+# Each entry: (module_path, class_name)
+_INSTRUMENTORS: list[tuple[str, str]] = [
+    ("opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+    ("opentelemetry.instrumentation.anthropic", "AnthropicInstrumentor"),
+    ("opentelemetry.instrumentation.google_generativeai", "GoogleGenerativeAiInstrumentor"),
+    ("opentelemetry.instrumentation.langchain", "LangchainInstrumentor"),
+    ("opentelemetry.instrumentation.cohere", "CohereInstrumentor"),
+]
+
+
+class _LoggingExporter(SpanExporter):
+    """Wraps an exporter to log failures instead of silently dropping spans."""
+
+    def __init__(self, inner: SpanExporter) -> None:
+        self._inner = inner
+        self._warned = False
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        result = self._inner.export(spans)
+        if result != SpanExportResult.SUCCESS:
+            if not self._warned:
+                logger.warning(
+                    "Promptic: failed to export %d span(s). "
+                    "Check your API key and endpoint. "
+                    "(Further export errors will be logged at DEBUG level.)",
+                    len(spans),
+                )
+                self._warned = True
+            else:
+                logger.debug("Promptic: failed to export %d span(s).", len(spans))
+        return result
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
+class _ComponentAttributeProcessor(SpanProcessor):
+    """Add ``promptic.ai_component`` attribute to spans inside :func:`ai_component`."""
+
+    def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+        name = _current_component.get()
+        if name is not None:
+            span.set_attribute(PROMPTIC_COMPONENT_ATTR, name)
+        ds = _current_dataset.get()
+        if ds is not None:
+            span.set_attribute(PROMPTIC_DATASET_ATTR, ds)
+        run = _current_run.get()
+        if run is not None:
+            span.set_attribute(PROMPTIC_RUN_ATTR, run)
+
+    def on_end(self, span: ReadableSpan) -> None:  # noqa: D102
+        pass
+
+    def shutdown(self) -> None:  # noqa: D102
+        pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:  # noqa: D102
+        return True
+
+
+def init(
+    *,
+    api_key: str | None = None,
+    endpoint: str | None = None,
+    auto_instrument: bool = True,
+    service_name: str | None = None,
+) -> None:
+    """Configure OpenTelemetry to send traces to Promptic.
+
+    Args:
+        api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
+        endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
+            then to ``https://promptic.eu``.
+        auto_instrument: If True, auto-detect installed LLM client libraries and
+            instrument them.
+        service_name: OpenTelemetry ``service.name`` resource attribute.
+    """
+    api_key = api_key or os.environ.get("PROMPTIC_API_KEY")
+    if not api_key:
+        msg = (
+            "Promptic API key is required. "
+            "Pass api_key= or set the PROMPTIC_API_KEY environment variable."
+        )
+        raise ValueError(msg)
+
+    endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
+    traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
+
+    exporter = _LoggingExporter(
+        OTLPSpanExporter(
+            endpoint=traces_endpoint,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+    )
+
+    resource_attrs = {}
+    if service_name:
+        resource_attrs["service.name"] = service_name
+
+    provider = TracerProvider(
+        resource=Resource.create(resource_attrs) if resource_attrs else Resource.create(),
+    )
+    provider.add_span_processor(_ComponentAttributeProcessor())
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+
+    # Ensure all spans are flushed when the process exits.
+    atexit.register(provider.shutdown)
+
+    _configure_langsmith_otel()
+
+    if auto_instrument:
+        _auto_instrument()
+
+
+def _langsmith_tracing_context(
+    component: str,
+    dataset: str | None,
+    run: str | None,
+) -> AbstractContextManager | None:
+    """Return a ``langsmith.tracing_context`` if available, else ``None``.
+
+    Injects Promptic attributes into LangSmith run metadata so they appear
+    as span attributes when the LangSmith OTel exporter converts runs to
+    OTel spans.  Without this, LangSmith-created spans would lack the
+    ``promptic.ai_component`` / ``promptic.dataset`` / ``promptic.run``
+    attributes needed to link traces to AI components.
+    """
+    if os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() != "true":
+        return None
+    try:
+        from langsmith import tracing_context
+    except ImportError:
+        return None
+
+    metadata: dict[str, str] = {PROMPTIC_COMPONENT_ATTR: component}
+    if dataset:
+        metadata[PROMPTIC_DATASET_ATTR] = dataset
+    if run:
+        metadata[PROMPTIC_RUN_ATTR] = run
+    return tracing_context(metadata=metadata)
+
+
+@contextmanager
+def ai_component(
+    name: str,
+    *,
+    dataset: str | None = None,
+    run: str | None = None,
+) -> Iterator[None]:
+    """Tag all spans created within this context with an AI Component name.
+
+    The server matches the name against AI Components in the workspace
+    and links traces accordingly.
+
+    Args:
+        name: AI Component name in the workspace.
+        dataset: Optional dataset name. When set, traces are automatically
+            added to the named dataset (created if it doesn't exist).
+        run: Optional run name. When set alongside ``dataset``, traces are
+            grouped into a named run within the dataset. Each unique run name
+            creates a separate run, allowing you to compare different
+            executions against the same dataset.
+
+    Example::
+
+        with promptic_sdk.ai_component("customer-support-agent"):
+            response = openai_client.chat.completions.create(...)
+
+        # With dataset and run tagging:
+        with promptic_sdk.ai_component("my-agent", dataset="eval-set", run="v1-baseline"):
+            agent.run(test_input)
+    """
+    comp_token = _current_component.set(name)
+    ds_token = _current_dataset.set(dataset) if dataset else None
+    run_token = _current_run.set(run) if run else None
+
+    # When LangSmith OTel bridge is active, inject Promptic attributes into
+    # LangSmith run metadata so they appear as span attributes after export.
+    langsmith_ctx = _langsmith_tracing_context(name, dataset, run)
+
+    try:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__enter__()
+        yield
+    finally:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__exit__(None, None, None)
+        _current_component.reset(comp_token)
+        if ds_token is not None:
+            _current_dataset.reset(ds_token)
+        if run_token is not None:
+            _current_run.reset(run_token)
+
+
+@contextmanager
+def dataset(name: str) -> Iterator[None]:
+    """Tag all spans created within this context with a dataset name.
+
+    Traces with a dataset attribute are automatically added to the named
+    dataset during OTLP ingestion (the dataset is created if it doesn't exist).
+
+    Can be nested inside :func:`ai_component` for composability::
+
+        with promptic_sdk.ai_component("my-agent"):
+            with promptic_sdk.dataset("eval-round-1"):
+                agent.run(test_input)
+    """
+    token = _current_dataset.set(name)
+    try:
+        yield
+    finally:
+        _current_dataset.reset(token)
+
+
+def _configure_langsmith_otel() -> None:
+    """Enable LangSmith's built-in OTel exporter for LangGraph tracing.
+
+    LangGraph (used by ``langchain.agents.create_agent`` and ``deepagents``)
+    traces internally via LangSmith's run tree, not LangChain callbacks.
+    OpenLLMetry's ``LangchainInstrumentor`` cannot see these internal runs,
+    causing missing spans for nested graphs.
+
+    LangSmith ships an ``OTELExporter`` that converts its full run tree —
+    including LLM token counts, tool names, and I/O — to OTel spans.  This
+    function activates it so that LangGraph spans are exported to Promptic
+    via the already-configured ``TracerProvider``.
+
+    Behaviour by user configuration:
+
+    * **No LangSmith env vars set** — enable tracing in OTel-only mode
+      (``LANGSMITH_OTEL_ONLY=true``).  No data is sent to LangSmith servers.
+    * **``LANGSMITH_TRACING=true`` with API key** — enable hybrid mode so
+      spans go to both LangSmith *and* Promptic.
+    * **``LANGSMITH_TRACING=false``** — user explicitly opted out; don't
+      force-enable.  Fall back to OpenLLMetry instrumentors only.
+    * **``LANGSMITH_OTEL_ENABLED`` already set** — respect the user's config.
+    """
+    # Don't touch anything if the user already configured LangSmith OTel.
+    if os.environ.get("LANGSMITH_OTEL_ENABLED"):
+        logger.debug("Promptic: LANGSMITH_OTEL_ENABLED already set, skipping auto-config")
+        return
+
+    # If the user explicitly disabled LangSmith tracing, respect that.
+    tracing_var = os.environ.get("LANGSMITH_TRACING_V2") or os.environ.get("LANGSMITH_TRACING")
+    if tracing_var and tracing_var.lower() == "false":
+        logger.debug("Promptic: LangSmith tracing explicitly disabled, skipping OTel bridge")
+        return
+
+    # Check if langsmith is installed (it's a transitive dep of langchain).
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("langsmith") is None:
+            return
+    except Exception:
+        return
+
+    # Determine the mode based on whether the user has a LangSmith API key.
+    has_langsmith_key = bool(os.environ.get("LANGSMITH_API_KEY"))
+    user_has_tracing_enabled = tracing_var and tracing_var.lower() == "true"
+
+    if has_langsmith_key and user_has_tracing_enabled:
+        # Hybrid mode: send to both LangSmith and Promptic.
+        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
+        logger.debug(
+            "Promptic: enabled LangSmith OTel bridge in hybrid mode "
+            "(traces go to both LangSmith and Promptic)"
+        )
+    else:
+        # OTel-only mode: LangGraph spans go to Promptic only.
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
+        os.environ.setdefault("LANGSMITH_OTEL_ONLY", "true")
+        logger.debug(
+            "Promptic: enabled LangSmith OTel bridge in OTel-only mode "
+            "(LangGraph spans go to Promptic, nothing sent to LangSmith)"
+        )
+
+
+def _auto_instrument() -> None:
+    """Try to import and enable each known instrumentor."""
+    import importlib
+    import importlib.util
+
+    # When LangSmith OTel bridge is active and langsmith is installed, it
+    # already exports all LangChain/LangGraph spans (including LLM calls
+    # with token counts).  Skip OpenLLMetry instrumentors to avoid duplicates.
+    langsmith_otel_active = (
+        os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
+        and importlib.util.find_spec("langsmith") is not None
+    )
+    skip_modules: set[str] = set()
+    if langsmith_otel_active:
+        skip_modules = {mod for mod, _ in _INSTRUMENTORS}
+        logger.debug(
+            "Promptic: LangSmith OTel bridge active — "
+            "skipping OpenLLMetry instrumentors (LangSmith covers all spans)"
+        )
+
+    for module_path, class_name in _INSTRUMENTORS:
+        if module_path in skip_modules:
+            continue
+        try:
+            mod = importlib.import_module(module_path)
+            instrumentor_cls = getattr(mod, class_name)
+            instrumentor_cls().instrument()
+            logger.debug("Promptic: enabled %s.%s", module_path, class_name)
+        except ImportError:
+            # Distinguish "package not installed" from "package broken internally".
+            # If the top-level package can be found on sys.path, the ImportError
+            # is an internal compatibility issue that the user should know about.
+            try:
+                is_installed = importlib.util.find_spec(module_path) is not None
+            except (ModuleNotFoundError, ValueError):
+                is_installed = False
+            if is_installed:
+                logger.warning(
+                    "Promptic: %s is installed but failed to import — "
+                    "it may be incompatible with your current dependencies. "
+                    "Try upgrading or pinning a compatible version.",
+                    module_path,
+                    exc_info=True,
+                )
+            # else: package genuinely not installed — skip silently
+        except Exception:
+            logger.warning(
+                "Promptic: failed to enable %s.%s — the package may be incompatible.",
+                module_path,
+                class_name,
+                exc_info=True,
+            )

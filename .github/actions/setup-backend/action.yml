@@ -1,0 +1,22 @@
+name: Setup backend (uv)
+description: Install Task, setup uv with caching, and install Python dependencies
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Task
+      uses: arduino/setup-task@v2
+      with:
+        repo-token: ${{ github.token }}
+
+    - name: Install uv and handle caching
+      id: setup-uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        cache-local-path: /tmp/.uv-cache
+        version: "0.5.26"
+
+    - name: Install the project
+      shell: bash
+      run: uv sync --all-groups --locked

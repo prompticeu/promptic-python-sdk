@@ -1,0 +1,78 @@
+name: CI
+run-name: CI for ${{ github.ref_name }}
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  # =============================================================================
+  # Quality Gate: All Prek Hooks
+  # =============================================================================
+  quality:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and dependencies
+        uses: ./.github/actions/setup-backend
+
+      - name: Cache prek hook environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ hashFiles('prek.toml') }}
+
+      - name: Run all prek hooks
+        uses: j178/prek-action@v1
+        env:
+          RUFF_OUTPUT_FORMAT: github
+        with:
+          extra-args: '--all-files'
+
+  # =============================================================================
+  # Tests
+  # =============================================================================
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and dependencies
+        uses: ./.github/actions/setup-backend
+
+      - name: Run Tests
+        run: task test -- --junitxml=test-results.xml
+
+      - name: Report Test Results
+        uses: mikepenz/action-junit-report@v5
+        if: always()
+        with:
+          report_paths: "test-results.xml"
+          check_name: "Test Results"
+          comment: true
+
+      - name: Report Test Coverage
+        if: always()
+        run: task test-coverage -- --format=markdown >> $GITHUB_STEP_SUMMARY
