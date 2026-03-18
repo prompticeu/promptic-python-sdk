@@ -32,7 +32,7 @@ jobs:
           version: "0.5.26"
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --all-groups --frozen
 
       - name: Configure git
         run: |
