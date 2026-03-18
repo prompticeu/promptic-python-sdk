@@ -228,4 +228,4 @@ uv run ruff format .
 
 ## License
 
-Proprietary — Promptic GmbH
+MIT — see [LICENSE](LICENSE) for details.
