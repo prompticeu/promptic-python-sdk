@@ -39,10 +39,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version and update changelog
+      - name: Bump version
         id: bump
         run: |
-          uv run cz bump --changelog --yes 2>&1 || {
+          uv run cz bump --yes 2>&1 || {
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "No version bump needed — no conventional commits since last tag."
             exit 0
@@ -53,18 +53,6 @@ jobs:
           VERSION=$(uv run cz version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Push version commit and tag
-        if: steps.bump.outputs.skip != 'true'
-        run: git push origin HEAD --follow-tags
-
-      - name: Build package
-        if: steps.bump.outputs.skip != 'true'
-        run: uv build
-
-      - name: Publish to PyPI
-        if: steps.bump.outputs.skip != 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Collect commits since last release
         if: steps.bump.outputs.skip != 'true'
@@ -94,6 +82,38 @@ jobs:
           echo "body<<$EOF" >> "$GITHUB_OUTPUT"
           echo "$BODY" >> "$GITHUB_OUTPUT"
           echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          RELEASE_BODY: ${{ steps.changelog.outputs.body }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          ENTRY="## v${VERSION} (${DATE})"$'\n\n'"${RELEASE_BODY}"
+          # Insert after the "# Changelog" header
+          if [ -f CHANGELOG.md ]; then
+            sed -i "0,/^# Changelog$/{ /^# Changelog$/a\\
+          \\
+          ${ENTRY}
+          }" CHANGELOG.md
+          else
+            printf '# Changelog\n\n%s\n' "$ENTRY" > CHANGELOG.md
+          fi
+          git add CHANGELOG.md
+          git commit -m "docs: update changelog for v${VERSION}"
+
+      - name: Push version commit, changelog, and tag
+        if: steps.bump.outputs.skip != 'true'
+        run: git push origin HEAD --follow-tags
+
+      - name: Build package
+        if: steps.bump.outputs.skip != 'true'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.bump.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Create GitHub Release
         if: steps.bump.outputs.skip != 'true'
