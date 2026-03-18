@@ -2,6 +2,13 @@
 
 ## v4.13.9 (2026-03-18)
 
+promptic-sdk v4.13.9 Release Notes
+No user-facing changes in this release.
+
+- Version bumped from 0.4.0 to 0.5.0.
+
+## v4.13.9 (2026-03-18)
+
 # promptic-sdk v4.13.9 Release Notes
 
 ## Features
