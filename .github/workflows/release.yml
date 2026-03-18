@@ -54,33 +54,37 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Collect commits since last release
+      - name: Collect commits and build prompt
         if: steps.bump.outputs.skip != 'true'
         run: |
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
-          git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'* %s' > /tmp/commits.txt
+          COMMITS=$(git log ${PREV_TAG:+${PREV_TAG}..HEAD} --pretty=format:'- %s')
+          cat > /tmp/release-prompt.txt <<PROMPT_EOF
+          Generate concise, human-readable release notes for promptic-sdk v${{ steps.bump.outputs.version }}.
+          Group changes into sections: Features, Bug Fixes, Improvements. Omit empty sections.
+          Use markdown bullet points. Do not include commit hashes. Keep descriptions clear and user-facing.
+
+          Commits since last release:
+          ${COMMITS}
+          PROMPT_EOF
 
       - name: Generate release notes with AI
         if: steps.bump.outputs.skip != 'true'
         id: ai
         uses: actions/ai-inference@v1
         with:
-          prompt-file: .github/prompts/release-notes.prompt.yml
-          input: |
-            version: ${{ steps.bump.outputs.version }}
-          file_input: |
-            commits: /tmp/commits.txt
+          prompt-file: /tmp/release-prompt.txt
+          model: openai/gpt-4.1
 
-      - name: Parse release notes from JSON
+      - name: Extract release notes
         if: steps.bump.outputs.skip != 'true'
         id: changelog
         env:
           AI_RESPONSE: ${{ steps.ai.outputs.response }}
         run: |
-          BODY=$(printf '%s' "$AI_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "body<<$EOF" >> "$GITHUB_OUTPUT"
-          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "$AI_RESPONSE" >> "$GITHUB_OUTPUT"
           echo "$EOF" >> "$GITHUB_OUTPUT"
 
       - name: Update CHANGELOG.md
