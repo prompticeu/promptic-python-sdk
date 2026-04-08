@@ -35,7 +35,7 @@ def run_evaluation(
     component_id: str = typer.Argument(help="AI Component ID."),
     dataset_id: str = typer.Option(..., "--dataset", help="Dataset ID to evaluate."),
     name: Annotated[str | None, typer.Option(help="Evaluation name.")] = None,
-    run_id: Annotated[str | None, typer.Option("--run", help="Run ID to associate.")] = None,
+    run_id: str = typer.Option(..., "--run", help="Run ID to associate."),
     no_wait: bool = typer.Option(False, "--no-wait", help="Don't wait for completion."),
     timeout: float = typer.Option(300, "--timeout", help="Max seconds to wait for completion."),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
