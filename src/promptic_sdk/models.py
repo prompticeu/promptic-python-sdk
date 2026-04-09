@@ -15,6 +15,8 @@ TaskType = Literal["classification", "textGeneration", "structuredOutput"]
 EvaluatorType = Literal["f1", "judge", "similarity", "structuredOutput"]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
+PromptFormat = Literal["single", "multi_message"]
+PromptMessageRole = Literal["system", "user", "assistant"]
 
 
 # ── Workspace ────────────────────────────────────────────────────────
@@ -211,10 +213,19 @@ class Deployment(TypedDict):
     experiment: Experiment
 
 
+class PromptMessage(TypedDict):
+    """A single message in a prompt template."""
+
+    role: PromptMessageRole
+    content: str
+
+
 class DeployedPrompt(TypedDict):
     """Deployed prompt with metadata from the best iteration."""
 
     prompt: str
+    promptMessages: list[PromptMessage]
+    promptFormat: PromptFormat
     model: str
     provider: ModelProvider
     componentId: str
