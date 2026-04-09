@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.2 (2026-04-09)
+
+## Bug Fixes
+
+- Improved the deployments prompt in CLI for better user experience.
+- Added support for multi-message format in CLI deployments.
+
 ## v0.11.1 (2026-04-09)
 
 ## Bug Fixes
