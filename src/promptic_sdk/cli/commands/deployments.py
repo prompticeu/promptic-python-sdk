@@ -85,8 +85,18 @@ def deployment_prompt(
     console.print(f"  Score:       {result.get('score', '-')}")
     console.print(f"  Experiment:  {result.get('experimentId', '-')}")
 
+    prompt_format = result.get("promptFormat", "single")
+    prompt_messages = result.get("promptMessages") or []
     prompt_text = result.get("prompt")
-    if prompt_text:
+
+    if prompt_format == "multi_message" and prompt_messages:
+        console.print("\n[bold]Prompt Messages:[/bold]\n")
+        for msg in prompt_messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            console.print(f"  [bold cyan]{role}:[/bold cyan]")
+            console.print(f"    {content}\n")
+    elif prompt_text:
         console.print("\n[bold]Prompt:[/bold]\n")
         console.print(prompt_text)
     else:
