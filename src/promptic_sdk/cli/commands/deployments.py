@@ -80,12 +80,17 @@ def deployment_prompt(
         console.print("No deployment active.", style="dim")
         return
 
-    console.print(f"\n[bold]{result['componentName'] or '-'}[/bold]")
-    console.print(f"  Model:       {result['model']}")
-    console.print(f"  Score:       {result['score']}")
-    console.print(f"  Experiment:  {result['experimentId']}")
-    console.print("\n[bold]Prompt:[/bold]\n")
-    console.print(result["prompt"])
+    console.print(f"\n[bold]{result.get('componentName') or '-'}[/bold]")
+    console.print(f"  Model:       {result.get('model', '-')}")
+    console.print(f"  Score:       {result.get('score', '-')}")
+    console.print(f"  Experiment:  {result.get('experimentId', '-')}")
+
+    prompt_text = result.get("prompt")
+    if prompt_text:
+        console.print("\n[bold]Prompt:[/bold]\n")
+        console.print(prompt_text)
+    else:
+        console.print("\n[dim]No prompt text available.[/dim]")
 
 
 @deployments_app.command("undeploy")

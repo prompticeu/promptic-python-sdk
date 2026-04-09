@@ -169,31 +169,54 @@ promptic [command] [subcommand] [options]
 
 ### Commands
 
-| Command                          | Description                          |
-| -------------------------------- | ------------------------------------ |
-| `promptic login`                 | Authenticate via browser (device flow) |
-| `promptic logout`                | Clear saved credentials              |
-| `promptic configure`             | Save API key and endpoint (CI/CD)    |
-| `promptic workspace list`        | List accessible workspaces           |
-| `promptic workspace select <id>` | Select a workspace                   |
-| `promptic workspace show`        | Show workspace info                  |
-| `promptic traces list`           | List recent traces                   |
-| `promptic traces get <id>`       | Get a trace with spans               |
-| `promptic traces stats`          | Show aggregated tracing stats        |
-| `promptic components list`       | List AI components                   |
-| `promptic components create`     | Create a component                   |
-| `promptic components get <id>`   | Get component details                |
-| `promptic components delete <id>`| Delete a component                   |
-| `promptic experiments list`      | List experiments                     |
-| `promptic experiments create`    | Create an experiment (interactive)   |
-| `promptic experiments get <id>`  | Get experiment details               |
-| `promptic experiments start <id>`| Start an experiment                  |
-| `promptic observations list`     | List observations for an experiment  |
-| `promptic evaluators list`       | List evaluators for an experiment    |
-| `promptic iterations list`       | List iterations for an experiment    |
-| `promptic deployments show`      | Show deployment for a component      |
-| `promptic deployments deploy`    | Deploy an experiment                 |
-| `promptic deployments undeploy`  | Remove a deployment                  |
+| Command                                | Description                            |
+| -------------------------------------- | -------------------------------------- |
+| `promptic login`                       | Authenticate via browser (device flow) |
+| `promptic logout`                      | Clear saved credentials                |
+| `promptic configure`                   | Save API key and endpoint (CI/CD)      |
+| `promptic workspace list`              | List accessible workspaces             |
+| `promptic workspace select <id>`       | Select a workspace                     |
+| `promptic workspace info`              | Show workspace info                    |
+| `promptic traces list`                 | List recent traces                     |
+| `promptic traces get <id>`             | Get a trace with spans                 |
+| `promptic traces stats`               | Show aggregated tracing stats          |
+| `promptic components list`             | List AI components                     |
+| `promptic components create`           | Create a component                     |
+| `promptic components get <id>`         | Get component details                  |
+| `promptic components delete <id>`      | Delete a component                     |
+| `promptic experiments list`            | List experiments                       |
+| `promptic experiments create`          | Create an experiment (interactive)     |
+| `promptic experiments get <id>`        | Get experiment details                 |
+| `promptic experiments update <id>`     | Update an experiment                   |
+| `promptic experiments delete <id>`     | Delete an experiment                   |
+| `promptic experiments start <id>`      | Start an experiment                    |
+| `promptic observations list`           | List observations for an experiment    |
+| `promptic observations add`            | Add an observation                     |
+| `promptic observations delete <id>`    | Delete an observation                  |
+| `promptic evaluators list`             | List evaluators for an experiment      |
+| `promptic evaluators add`              | Add an evaluator                       |
+| `promptic evaluators delete <id>`      | Delete an evaluator                    |
+| `promptic iterations list`             | List iterations for an experiment      |
+| `promptic iterations get <id>`         | Get iteration details                  |
+| `promptic iterations best`             | Get the best iteration                 |
+| `promptic deployments status <id>`     | Show deployment for a component        |
+| `promptic deployments deploy`          | Deploy an experiment                   |
+| `promptic deployments prompt <id>`     | Show the deployed prompt               |
+| `promptic deployments undeploy <id>`   | Remove a deployment                    |
+| `promptic datasets create`             | Create a dataset                       |
+| `promptic datasets list`               | List datasets                          |
+| `promptic datasets get <id>`           | Get dataset details                    |
+| `promptic datasets delete <id>`        | Delete a dataset                       |
+| `promptic runs create`                 | Create a run                           |
+| `promptic runs list`                   | List runs                              |
+| `promptic runs get <id>`               | Get run details                        |
+| `promptic runs delete <id>`            | Delete a run                           |
+| `promptic annotations create`          | Create an annotation                   |
+| `promptic annotations list`            | List annotations                       |
+| `promptic annotations delete <id>`     | Delete an annotation                   |
+| `promptic evaluations run`             | Run an evaluation                      |
+| `promptic evaluations list`            | List evaluations                       |
+| `promptic evaluations get <id>`        | Get evaluation details                 |
 
 All list commands support `--json` for machine-readable output.
 
