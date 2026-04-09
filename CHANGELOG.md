@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.1 (2026-04-09)
+
+## Bug Fixes
+
+- CLI now gracefully handles missing prompt fields in the deployments prompt command.
+
 ## v0.11.0 (2026-04-08)
 
 ## Features
