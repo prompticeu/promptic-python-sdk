@@ -105,6 +105,58 @@ class TestPrompticClient:
         assert client.endpoint == "https://example.com"
         client.close()
 
+    def test_create_observations_normalizes_legacy_input(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.url.path == "/api/v1/experiments/exp_123/observations"
+                assert request.read() == (b'[{"expected":"out","variables":{"input":"in"}}]')
+                return httpx.Response(201, json={"data": []})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = client.create_observations("exp_123", [{"input": "in", "expected": "out"}])
+
+        assert result == {"data": []}
+
+    def test_update_observation_normalizes_legacy_input(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.url.path == "/api/v1/experiments/exp_123/observations/7"
+                assert request.read() == b'{"expected":"out","variables":{"input":"in"}}'
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": 7,
+                        "experimentId": "exp_123",
+                        "idx": 0,
+                        "expected": "out",
+                        "variables": {"input": "in"},
+                        "split": "eval",
+                        "createdAt": "2026-01-01T00:00:00Z",
+                        "updatedAt": "2026-01-01T00:00:00Z",
+                    },
+                )
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = client.update_observation("exp_123", 7, input="in", expected="out")
+
+        assert result["variables"] == {"input": "in"}
+
 
 class TestAsyncPrompticClient:
     def test_requires_api_key(self):
@@ -199,3 +251,25 @@ class TestAsyncPrompticClient:
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         client = AsyncPrompticClient(endpoint="https://example.com/")
         assert client.endpoint == "https://example.com"
+
+    async def test_create_observations_normalizes_legacy_input(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        async with AsyncPrompticClient() as client:
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                assert request.url.path == "/api/v1/experiments/exp_123/observations"
+                assert request.read() == (b'[{"expected":"out","variables":{"input":"in"}}]')
+                return httpx.Response(201, json={"data": []})
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = await client.create_observations(
+                "exp_123", [{"input": "in", "expected": "out"}]
+            )
+
+        assert result == {"data": []}

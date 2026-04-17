@@ -117,14 +117,13 @@ class ExperimentStarted(TypedDict):
 
 
 class Observation(TypedDict):
-    """Observation (input/expected pair) record."""
+    """Observation record with one or more input variables and expected output."""
 
     id: int
     experimentId: str
     idx: int
-    input: str
     expected: str
-    variables: Any
+    variables: dict[str, Any]
     split: SplitType
     createdAt: str
     updatedAt: str

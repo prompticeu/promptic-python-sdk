@@ -59,6 +59,24 @@ class PrompticAPIError(Exception):
         super().__init__(f"[{status_code}] {message}")
 
 
+def _normalize_observation_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert legacy ``input`` observation payloads to ``variables``.
+
+    The platform stores observation inputs as named variables. For convenience,
+    the SDK still accepts the old ``input=...`` shape and sends it as the
+    default ``input`` variable.
+    """
+    payload = dict(data)
+    legacy_input = payload.pop("input", None)
+    if legacy_input is not None and "variables" not in payload:
+        payload["variables"] = {"input": legacy_input}
+    return payload
+
+
+def _normalize_observation_payloads(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalize_observation_payload(obs) for obs in observations]
+
+
 @dataclass
 class PrompticClient:
     """Client for interacting with the Promptic platform API.
@@ -299,13 +317,19 @@ class PrompticClient:
         self, experiment_id: str, observations: list[dict[str, Any]]
     ) -> ObservationList:
         """Create observations for an experiment (batch)."""
-        return self._post(f"/experiments/{experiment_id}/observations", json=observations)
+        return self._post(
+            f"/experiments/{experiment_id}/observations",
+            json=_normalize_observation_payloads(observations),
+        )
 
     def update_observation(
         self, experiment_id: str, observation_id: int, **data: Any
     ) -> Observation:
         """Update an observation."""
-        return self._patch(f"/experiments/{experiment_id}/observations/{observation_id}", json=data)
+        return self._patch(
+            f"/experiments/{experiment_id}/observations/{observation_id}",
+            json=_normalize_observation_payload(data),
+        )
 
     def delete_observation(self, experiment_id: str, observation_id: int) -> None:
         """Delete an observation."""
@@ -772,14 +796,18 @@ class AsyncPrompticClient:
         self, experiment_id: str, observations: list[dict[str, Any]]
     ) -> ObservationList:
         """Create observations for an experiment (batch)."""
-        return await self._post(f"/experiments/{experiment_id}/observations", json=observations)
+        return await self._post(
+            f"/experiments/{experiment_id}/observations",
+            json=_normalize_observation_payloads(observations),
+        )
 
     async def update_observation(
         self, experiment_id: str, observation_id: int, **data: Any
     ) -> Observation:
         """Update an observation."""
         return await self._patch(
-            f"/experiments/{experiment_id}/observations/{observation_id}", json=data
+            f"/experiments/{experiment_id}/observations/{observation_id}",
+            json=_normalize_observation_payload(data),
         )
 
     async def delete_observation(self, experiment_id: str, observation_id: int) -> None:
