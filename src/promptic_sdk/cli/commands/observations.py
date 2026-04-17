@@ -6,7 +6,7 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -19,33 +19,65 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _load_from_file(path: Path) -> list[dict[str, str]]:
-    """Load observations from CSV or JSONL file."""
+# Columns that are observation metadata, not input variables
+_META_COLUMNS = {"expected", "split", "idx"}
+
+
+def _load_from_file(path: Path) -> list[dict[str, Any]]:
+    """Load observations from CSV or JSONL file.
+
+    Non-meta columns (everything except expected, split, idx) are wrapped
+    into the ``variables`` dict.
+    """
     suffix = path.suffix.lower()
     if suffix == ".csv":
         with open(path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            return [dict(row) for row in reader]
+            raw_rows = [dict(row) for row in reader]
     elif suffix in (".jsonl", ".ndjson"):
-        rows = []
+        raw_rows = []
         with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
-                    rows.append(json.loads(line))
-        return rows
+                    raw_rows.append(json.loads(line))
     elif suffix == ".json":
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            return data
-        err_console.print("JSON file must contain an array of objects.", style="red")
-        raise typer.Exit(1)
+            raw_rows = data
+        else:
+            err_console.print("JSON file must contain an array of objects.", style="red")
+            raise typer.Exit(1)
     else:
         err_console.print(
             f"Unsupported file format: {suffix}. Use .csv, .jsonl, or .json", style="red"
         )
         raise typer.Exit(1)
+
+    # Wrap non-meta columns into variables
+    observations: list[dict[str, Any]] = []
+    for row in raw_rows:
+        obs: dict[str, Any] = {}
+        variables: dict[str, str] = {}
+        for k, v in row.items():
+            if k in _META_COLUMNS:
+                obs[k] = v
+            elif k == "variables" and isinstance(v, dict):
+                variables.update(v)
+            else:
+                variables[k] = v
+        obs["variables"] = variables
+        observations.append(obs)
+    return observations
+
+
+def _format_variables(variables: Any) -> str:
+    if not isinstance(variables, dict) or not variables:
+        return "-"
+    if set(variables) == {"input"}:
+        return str(variables["input"])
+    return json.dumps(variables, ensure_ascii=False)
 
 
 @observations_app.command("list")
@@ -70,17 +102,17 @@ def list_observations(
     table = Table(title=f"Observations ({len(items)})")
     table.add_column("ID", style="cyan")
     table.add_column("Idx", justify="right")
-    table.add_column("Input", max_width=40)
+    table.add_column("Variables", max_width=40)
     table.add_column("Expected", max_width=40)
     table.add_column("Split")
 
     for o in items:
-        inp = o["input"]
+        variables = _format_variables(o.get("variables"))
         exp = o["expected"]
         table.add_row(
             str(o["id"]),
             str(o["idx"]),
-            inp[:40] + ("..." if len(inp) > 40 else ""),
+            variables[:40] + ("..." if len(variables) > 40 else ""),
             exp[:40] + ("..." if len(exp) > 40 else ""),
             o["split"],
         )
@@ -108,7 +140,7 @@ def add_observations(
     Use --from-file for bulk import (CSV with input,expected columns, or JSONL).
     Use --input and --expected for a single observation.
     """
-    observations: list[dict[str, str]] = []
+    observations: list[dict[str, Any]] = []
 
     if from_file:
         if not from_file.exists():
@@ -117,7 +149,9 @@ def add_observations(
         observations = _load_from_file(from_file)
         console.print(f"Loaded {len(observations)} observations from {from_file}")
     elif input_text and expected_text:
-        observations = [{"input": input_text, "expected": expected_text, "split": split}]
+        observations = [
+            {"variables": {"input": input_text}, "expected": expected_text, "split": split}
+        ]
     else:
         err_console.print(
             "Provide --from-file or both --input and --expected.",
