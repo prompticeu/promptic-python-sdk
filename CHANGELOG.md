@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.3 (2026-04-17)
+
+## Bug Fixes
+
+- Normalize observation variables to ensure consistent handling within the SDK.
+
 ## v0.11.2 (2026-04-09)
 
 ## Bug Fixes
