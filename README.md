@@ -10,14 +10,26 @@ pip install promptic-sdk
 
 ### Optional LLM instrumentation
 
-Install extras to auto-instrument specific LLM providers:
+Install extras to auto-instrument specific providers or agent frameworks:
 
 ```bash
-pip install promptic-sdk[openai]       # OpenAI
-pip install promptic-sdk[anthropic]    # Anthropic
-pip install promptic-sdk[langchain]    # LangChain
-pip install promptic-sdk[all]          # All providers
+# LLM providers
+pip install promptic-sdk[openai]         # OpenAI
+pip install promptic-sdk[anthropic]      # Anthropic
+pip install promptic-sdk[bedrock]        # AWS Bedrock
+pip install promptic-sdk[vertexai]       # Google Vertex AI
+pip install promptic-sdk[mistralai]      # Mistral
+
+# Agent frameworks
+pip install promptic-sdk[langchain]      # LangChain / LangGraph / create_agent / deepagents
+pip install promptic-sdk[openai-agents]  # OpenAI Agents SDK
+pip install promptic-sdk[claude-agent]   # Claude Agent SDK
+
+pip install promptic-sdk[all]            # Everything above
 ```
+
+Pydantic AI ships its own OpenTelemetry emitter — enable it with
+`Agent(..., instrument=True)`; no extras needed.
 
 ## Quick start
 
@@ -96,7 +108,10 @@ with PrompticClient() as client:
 | `auto_instrument`  | Auto-detect and instrument LLM client libraries     | `True`                       |
 | `service_name`     | OpenTelemetry `service.name` resource attribute      | —                            |
 
-Auto-detected instrumentors: OpenAI, Anthropic, Google Generative AI, LangChain, Cohere.
+Auto-detected instrumentors: OpenAI, Anthropic, Google Generative AI, Vertex AI,
+Bedrock, Mistral, Cohere, LangChain (with LangGraph / deepagents), OpenAI Agents
+SDK, Claude Agent SDK. All emit the official OpenTelemetry GenAI semantic
+conventions (`gen_ai.*`), so traces work uniformly across frameworks.
 
 ### Using other OpenTelemetry instrumentors
 

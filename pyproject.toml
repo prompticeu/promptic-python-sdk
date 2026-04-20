@@ -19,12 +19,28 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# LLM providers (direct SDK calls)
 openai = ["opentelemetry-instrumentation-openai>=0.30b0"]
 anthropic = ["opentelemetry-instrumentation-anthropic>=0.30b0"]
+bedrock = ["opentelemetry-instrumentation-bedrock>=0.30b0"]
+vertexai = ["opentelemetry-instrumentation-vertexai>=0.30b0"]
+mistralai = ["opentelemetry-instrumentation-mistralai>=0.30b0"]
+# Agent frameworks
 langchain = [
-    "opentelemetry-instrumentation-langchain>=0.30b0,!=0.53.0",
+    "opentelemetry-instrumentation-langchain>=0.60.0,!=0.53.0",
+    # Pin base instrumentation until OpenLLMetry #4025 ships (drops support for
+    # `wrap_function_wrapper(module=...)` keyword-arg form).  Remove once
+    # opentelemetry-instrumentation-langchain releases a fix.
+    "opentelemetry-instrumentation<0.62b0",
 ]
-all = ["promptic-sdk[openai,anthropic,langchain]"]
+openai-agents = ["opentelemetry-instrumentation-openai-agents-v2"]
+# Published as `opentelemetry-claude-agent-sdk` on PyPI; the module path
+# remains `opentelemetry.instrumentation.claude_agent_sdk`.  The official
+# opentelemetry-python-contrib package for this is still unreleased.
+claude-agent = ["opentelemetry-claude-agent-sdk"]
+all = [
+    "promptic-sdk[openai,anthropic,bedrock,vertexai,mistralai,langchain,openai-agents,claude-agent]",
+]
 
 [project.scripts]
 promptic = "promptic_sdk.cli.main:main"
