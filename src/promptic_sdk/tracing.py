@@ -41,12 +41,26 @@ _current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 # Instrumentors that we try to auto-detect and enable.
 # Each entry: (module_path, class_name)
+#
+# The first three cover direct LLM SDK calls (works across any framework).
+# The rest cover framework-level instrumentation; all emit OTel-official
+# ``gen_ai.*`` semantic conventions that the backend parser handles uniformly.
+#
+# Pydantic AI is intentionally absent — it ships its own OTel emitter; users
+# opt in by constructing the Agent with ``instrument=True``.
 _INSTRUMENTORS: list[tuple[str, str]] = [
+    # LLM providers (direct SDK calls) — emit gen_ai.* on every chat/completion.
     ("opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
     ("opentelemetry.instrumentation.anthropic", "AnthropicInstrumentor"),
     ("opentelemetry.instrumentation.google_generativeai", "GoogleGenerativeAiInstrumentor"),
-    ("opentelemetry.instrumentation.langchain", "LangchainInstrumentor"),
+    ("opentelemetry.instrumentation.vertexai", "VertexAIInstrumentor"),
+    ("opentelemetry.instrumentation.bedrock", "BedrockInstrumentor"),
+    ("opentelemetry.instrumentation.mistralai", "MistralAiInstrumentor"),
     ("opentelemetry.instrumentation.cohere", "CohereInstrumentor"),
+    # Agent frameworks — emit chain/tool/llm spans with the full graph structure.
+    ("opentelemetry.instrumentation.langchain", "LangchainInstrumentor"),
+    ("opentelemetry.instrumentation.openai_agents", "OpenAIAgentsInstrumentor"),
+    ("opentelemetry.instrumentation.claude_agent_sdk", "ClaudeAgentSdkInstrumentor"),
 ]
 
 
@@ -152,8 +166,6 @@ def init(
     # Ensure all spans are flushed when the process exits.
     atexit.register(provider.shutdown)
 
-    _configure_langsmith_otel()
-
     if auto_instrument:
         _auto_instrument()
 
@@ -258,94 +270,22 @@ def dataset(name: str) -> Iterator[None]:
         _current_dataset.reset(token)
 
 
-def _configure_langsmith_otel() -> None:
-    """Enable LangSmith's built-in OTel exporter for LangGraph tracing.
-
-    LangGraph (used by ``langchain.agents.create_agent`` and ``deepagents``)
-    traces internally via LangSmith's run tree, not LangChain callbacks.
-    OpenLLMetry's ``LangchainInstrumentor`` cannot see these internal runs,
-    causing missing spans for nested graphs.
-
-    LangSmith ships an ``OTELExporter`` that converts its full run tree —
-    including LLM token counts, tool names, and I/O — to OTel spans.  This
-    function activates it so that LangGraph spans are exported to Promptic
-    via the already-configured ``TracerProvider``.
-
-    Behaviour by user configuration:
-
-    * **No LangSmith env vars set** — enable tracing in OTel-only mode
-      (``LANGSMITH_OTEL_ONLY=true``).  No data is sent to LangSmith servers.
-    * **``LANGSMITH_TRACING=true`` with API key** — enable hybrid mode so
-      spans go to both LangSmith *and* Promptic.
-    * **``LANGSMITH_TRACING=false``** — user explicitly opted out; don't
-      force-enable.  Fall back to OpenLLMetry instrumentors only.
-    * **``LANGSMITH_OTEL_ENABLED`` already set** — respect the user's config.
-    """
-    # Don't touch anything if the user already configured LangSmith OTel.
-    if os.environ.get("LANGSMITH_OTEL_ENABLED"):
-        logger.debug("Promptic: LANGSMITH_OTEL_ENABLED already set, skipping auto-config")
-        return
-
-    # If the user explicitly disabled LangSmith tracing, respect that.
-    tracing_var = os.environ.get("LANGSMITH_TRACING_V2") or os.environ.get("LANGSMITH_TRACING")
-    if tracing_var and tracing_var.lower() == "false":
-        logger.debug("Promptic: LangSmith tracing explicitly disabled, skipping OTel bridge")
-        return
-
-    # Check if langsmith is installed (it's a transitive dep of langchain).
-    try:
-        import importlib.util
-
-        if importlib.util.find_spec("langsmith") is None:
-            return
-    except Exception:
-        return
-
-    # Determine the mode based on whether the user has a LangSmith API key.
-    has_langsmith_key = bool(os.environ.get("LANGSMITH_API_KEY"))
-    user_has_tracing_enabled = tracing_var and tracing_var.lower() == "true"
-
-    if has_langsmith_key and user_has_tracing_enabled:
-        # Hybrid mode: send to both LangSmith and Promptic.
-        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
-        logger.debug(
-            "Promptic: enabled LangSmith OTel bridge in hybrid mode "
-            "(traces go to both LangSmith and Promptic)"
-        )
-    else:
-        # OTel-only mode: LangGraph spans go to Promptic only.
-        os.environ.setdefault("LANGSMITH_TRACING", "true")
-        os.environ.setdefault("LANGSMITH_OTEL_ENABLED", "true")
-        os.environ.setdefault("LANGSMITH_OTEL_ONLY", "true")
-        logger.debug(
-            "Promptic: enabled LangSmith OTel bridge in OTel-only mode "
-            "(LangGraph spans go to Promptic, nothing sent to LangSmith)"
-        )
-
-
 def _auto_instrument() -> None:
-    """Try to import and enable each known instrumentor."""
+    """Try to import and enable each known instrumentor.
+
+    OpenLLMetry's instrumentors are the primary path. They emit OTel-official
+    ``gen_ai.*`` semantic conventions (including ``gen_ai.tool.definitions``)
+    and cover LangGraph / deepagents correctly as of
+    ``opentelemetry-instrumentation-langchain>=0.60.0``.
+
+    If the user manually sets ``LANGSMITH_OTEL_ENABLED=true`` in their env,
+    that path is also supported — both sources coexist, and the backend
+    de-duplicates/recognizes both. We do not auto-enable LangSmith anymore.
+    """
     import importlib
     import importlib.util
 
-    # When LangSmith OTel bridge is active and langsmith is installed, it
-    # already exports all LangChain/LangGraph spans (including LLM calls
-    # with token counts).  Skip OpenLLMetry instrumentors to avoid duplicates.
-    langsmith_otel_active = (
-        os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
-        and importlib.util.find_spec("langsmith") is not None
-    )
-    skip_modules: set[str] = set()
-    if langsmith_otel_active:
-        skip_modules = {mod for mod, _ in _INSTRUMENTORS}
-        logger.debug(
-            "Promptic: LangSmith OTel bridge active — "
-            "skipping OpenLLMetry instrumentors (LangSmith covers all spans)"
-        )
-
     for module_path, class_name in _INSTRUMENTORS:
-        if module_path in skip_modules:
-            continue
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
