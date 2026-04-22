@@ -86,7 +86,8 @@ class Experiment(TypedDict):
     taskType: TaskType
     optimizer: OptimizerType
     tokensUsed: float
-    initialPrompt: str | None
+    promptFormat: PromptFormat
+    initialPromptMessages: list[PromptMessage]
     initialPromptTokens: int | None
     initialPredictionModelSchema: Any
     runNumber: int | None

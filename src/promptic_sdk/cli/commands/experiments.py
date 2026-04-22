@@ -152,11 +152,22 @@ def get_experiment(
     console.print(f"  Model:    {result['targetModel']}")
     console.print(f"  Provider: {result['provider']}")
     console.print(f"  Task:     {result['taskType']}")
-    if result["initialPrompt"]:
-        prompt_preview = result["initialPrompt"][:100]
-        console.print(
-            f"  Prompt:   {prompt_preview}{'...' if len(result['initialPrompt']) > 100 else ''}"
-        )
+    prompt_format = result.get("promptFormat", "single")
+    prompt_messages = result.get("initialPromptMessages") or []
+    if prompt_messages:
+        if prompt_format == "multi_message":
+            console.print("  Prompt:")
+            for msg in prompt_messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                preview = content[:100]
+                suffix = "..." if len(content) > 100 else ""
+                console.print(f"    [cyan]{role}:[/cyan] {preview}{suffix}")
+        else:
+            content = prompt_messages[0].get("content", "")
+            preview = content[:100]
+            suffix = "..." if len(content) > 100 else ""
+            console.print(f"  Prompt:   {preview}{suffix}")
     console.print(f"  Created:  {result['createdAt']}")
 
 
