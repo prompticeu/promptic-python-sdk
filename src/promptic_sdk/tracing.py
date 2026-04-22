@@ -285,6 +285,22 @@ def _auto_instrument() -> None:
     import importlib
     import importlib.util
 
+    # Warn when LangSmith tracing is active without its OTel bridge.  LangSmith
+    # installs a LangChain callback handler that intercepts model calls before
+    # OpenLLMetry's LangchainInstrumentor can hook them — resulting in missing
+    # ChatOpenAI.chat spans and silently broken agent-evaluation insights.
+    langsmith_tracing = os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
+    langsmith_otel = os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
+    if langsmith_tracing and not langsmith_otel:
+        logger.warning(
+            "Promptic: LANGSMITH_TRACING=true is set without LANGSMITH_OTEL_ENABLED=true. "
+            "LangSmith's callback handler will intercept LangChain/LangGraph runs before "
+            "OpenLLMetry can instrument them, so ChatOpenAI spans and tool definitions "
+            "may be missing from your Promptic traces. "
+            "Either unset LANGSMITH_TRACING, or set LANGSMITH_OTEL_ENABLED=true to "
+            "route LangSmith spans through OTel into Promptic."
+        )
+
     for module_path, class_name in _INSTRUMENTORS:
         try:
             mod = importlib.import_module(module_path)
