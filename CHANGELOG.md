@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.0 (2026-04-22)
+
+## Features
+
+- Migrated tracing to OpenLLMetry for improved observability.
+- Removed LangSmith auto-bridge integration to streamline tracing.
+
 ## v0.11.3 (2026-04-17)
 
 ## Bug Fixes
