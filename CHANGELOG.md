@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.13.0 (2026-04-22)
+
+## Features
+
+- Added tracing: When LANGSMITH_TRACING=true, the SDK now warns users if it overrides LangChain callbacks.
+
 ## v0.12.0 (2026-04-22)
 
 ## Features
