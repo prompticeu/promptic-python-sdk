@@ -39,15 +39,19 @@ def list_iterations(
     table.add_column("#", justify="right")
     table.add_column("ID", style="cyan")
     table.add_column("Score", justify="right")
+    table.add_column("Eval Score", justify="right")
     table.add_column("Prompt Tokens", justify="right")
     table.add_column("Created")
 
     for it in items:
         score_str = f"{it['overallNormalizedScore']:.4f}"
+        eval_score = it.get("evalNormalizedScore")
+        eval_str = f"{eval_score:.4f}" if eval_score is not None else "-"
         table.add_row(
             str(it["iterationNumber"]),
             str(it["id"]),
             score_str,
+            eval_str,
             str(it["promptTokens"] or "-"),
             it["createdAt"],
         )
@@ -92,11 +96,14 @@ def best_iteration(
 
 def _print_iteration(it: IterationWithScores) -> None:
     score_str = f"{it['overallNormalizedScore']:.4f}"
+    eval_score = it.get("evalNormalizedScore")
+    eval_str = f"{eval_score:.4f}" if eval_score is not None else "-"
 
     console.print(f"\n[bold]Iteration #{it['iterationNumber']}[/bold]")
-    console.print(f"  ID:     {it['id']}")
-    console.print(f"  Score:  [green]{score_str}[/green]")
-    console.print(f"  Tokens: {it['promptTokens'] or '-'}")
+    console.print(f"  ID:         {it['id']}")
+    console.print(f"  Score:      [green]{score_str}[/green]")
+    console.print(f"  Eval Score: [green]{eval_str}[/green]")
+    console.print(f"  Tokens:     {it['promptTokens'] or '-'}")
 
     prompt = it["prompt"]
     if prompt:

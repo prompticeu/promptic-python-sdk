@@ -172,6 +172,7 @@ class Iteration(TypedDict):
     prompt: str
     promptTokens: int | None
     overallNormalizedScore: float
+    evalNormalizedScore: float | None
     schemaSnapshot: Any
     createdAt: str
     updatedAt: str
