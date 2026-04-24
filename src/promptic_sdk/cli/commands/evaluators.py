@@ -59,7 +59,13 @@ def add_evaluator(
     experiment_id: str = typer.Argument(help="Experiment ID."),
     name: str = typer.Option(..., "--name", "-n", help="Evaluator name."),
     eval_type: str = typer.Option(
-        ..., "--type", "-t", help="Type (f1, judge, similarity, structuredOutput)."
+        ...,
+        "--type",
+        "-t",
+        help=(
+            "Type (f1, referenceJudge, comparisonJudge, generalJudge, "
+            "similarity, structuredOutput)."
+        ),
     ),
     scale_min: float = typer.Option(0, "--scale-min", help="Scale minimum."),
     scale_max: float = typer.Option(1, "--scale-max", help="Scale maximum."),

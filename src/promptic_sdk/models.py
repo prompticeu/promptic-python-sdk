@@ -12,7 +12,14 @@ ExperimentStatus = Literal["pending", "scheduled", "running", "completed", "fail
 ModelProvider = Literal["openai", "openrouter", "custom", "google"]
 OptimizerType = Literal["promptic", "prompticV2", "miproV2", "bootstrapFewShot", "gepa"]
 TaskType = Literal["classification", "textGeneration", "structuredOutput"]
-EvaluatorType = Literal["f1", "judge", "similarity", "structuredOutput"]
+EvaluatorType = Literal[
+    "f1",
+    "referenceJudge",
+    "comparisonJudge",
+    "generalJudge",
+    "similarity",
+    "structuredOutput",
+]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
 PromptFormat = Literal["single", "multi_message"]
