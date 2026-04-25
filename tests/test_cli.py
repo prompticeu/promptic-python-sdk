@@ -228,3 +228,167 @@ class TestExperimentsCommands:
             result = runner.invoke(app, ["experiments", "continue", "src-exp-id"])
             assert result.exit_code == 0
             assert "no longer available" in result.stdout
+
+
+class TestEvaluatorsCommands:
+    def _created_payload(self, eval_id: str = "eval-id") -> dict:
+        return {
+            "data": [
+                {
+                    "id": eval_id,
+                    "name": "Findings",
+                    "type": "comparisonJudge",
+                    "scaleMin": 1,
+                    "scaleMax": 10,
+                    "weight": 1.0,
+                }
+            ]
+        }
+
+    def test_add_with_instructions_passes_config(self):
+        with (
+            _mock_config(),
+            _mock_client("evaluators", "create_evaluators", self._created_payload()) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "evaluators",
+                    "add",
+                    "exp-id",
+                    "-n",
+                    "Findings",
+                    "-t",
+                    "comparisonJudge",
+                    "--scale-min",
+                    "1",
+                    "--scale-max",
+                    "10",
+                    "-i",
+                    "Score on a 1-10 scale balancing recall and precision.",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            mock_client = patched.return_value
+            mock_client.create_evaluators.assert_called_once()
+            ((exp_id, payload), _) = mock_client.create_evaluators.call_args
+            assert exp_id == "exp-id"
+            assert payload[0]["config"] == {
+                "instructions": "Score on a 1-10 scale balancing recall and precision."
+            }
+            assert payload[0]["scaleMin"] == 1
+            assert payload[0]["scaleMax"] == 10
+
+    def test_add_with_config_file_loads_json(self, tmp_path):
+        cfg_path = tmp_path / "judge.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "messages": [
+                        {"role": "system", "content": "Judge it."},
+                        {"role": "user", "content": "<findings>{predicted}</findings>"},
+                    ]
+                }
+            )
+        )
+        with (
+            _mock_config(),
+            _mock_client("evaluators", "create_evaluators", self._created_payload()) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "evaluators",
+                    "add",
+                    "exp-id",
+                    "-n",
+                    "Consec",
+                    "-t",
+                    "generalJudge",
+                    "-c",
+                    str(cfg_path),
+                ],
+            )
+            assert result.exit_code == 0
+            ((_, payload), _) = patched.return_value.create_evaluators.call_args
+            assert payload[0]["config"]["messages"][0]["role"] == "system"
+
+    def test_add_rejects_both_instructions_and_config_file(self, tmp_path):
+        cfg_path = tmp_path / "c.json"
+        cfg_path.write_text("{}")
+        with _mock_config():
+            result = runner.invoke(
+                app,
+                [
+                    "evaluators",
+                    "add",
+                    "exp-id",
+                    "-n",
+                    "X",
+                    "-t",
+                    "comparisonJudge",
+                    "-i",
+                    "X",
+                    "-c",
+                    str(cfg_path),
+                ],
+            )
+            assert result.exit_code == 2
+            assert "mutually exclusive" in result.stderr or "mutually exclusive" in result.stdout
+
+    def test_add_rejects_invalid_config_file(self, tmp_path):
+        cfg_path = tmp_path / "bad.json"
+        cfg_path.write_text("[1, 2, 3]")  # array, not object
+        with _mock_config():
+            result = runner.invoke(
+                app,
+                [
+                    "evaluators",
+                    "add",
+                    "exp-id",
+                    "-n",
+                    "X",
+                    "-t",
+                    "generalJudge",
+                    "-c",
+                    str(cfg_path),
+                ],
+            )
+            assert result.exit_code == 2
+
+    def test_update_swaps_instructions(self):
+        with (
+            _mock_config(),
+            _mock_client(
+                "evaluators",
+                "update_evaluator",
+                {"id": "eval-id", "name": "Findings"},
+            ) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "evaluators",
+                    "update",
+                    "exp-id",
+                    "eval-id",
+                    "-i",
+                    "new instructions",
+                    "--scale-max",
+                    "10",
+                ],
+            )
+            assert result.exit_code == 0
+            mock_client = patched.return_value
+            mock_client.update_evaluator.assert_called_once_with(
+                "exp-id",
+                "eval-id",
+                config={"instructions": "new instructions"},
+                scaleMax=10,
+            )
+
+    def test_update_with_no_flags_errors(self):
+        with _mock_config():
+            result = runner.invoke(app, ["evaluators", "update", "exp-id", "eval-id"])
+            assert result.exit_code == 1
