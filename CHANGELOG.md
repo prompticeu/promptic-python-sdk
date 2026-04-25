@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.14.0 (2026-04-25)
+
+## Features
+
+- Added duplicate and continue commands to the CLI for experiments.
+
+
+
 ## Unreleased
 
 ## Features
