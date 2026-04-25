@@ -307,6 +307,40 @@ class PrompticClient:
         """Start a pending experiment (enqueue for training)."""
         return self._post(f"/experiments/{experiment_id}/start")
 
+    def duplicate_experiment(
+        self,
+        experiment_id: str,
+        *,
+        continue_from_optimized: bool = False,
+        initial_prompt_override: str | None = None,
+    ) -> Experiment:
+        """Duplicate an experiment (clones observations + evaluators).
+
+        Creates a new experiment under the same AI component as the source.
+        By default the new experiment starts from the source's initial
+        prompt; pass ``continue_from_optimized=True`` to seed it from the
+        source's best optimized prompt instead (the "continue" flow), or
+        ``initial_prompt_override`` to override with custom text.
+
+        Args:
+            experiment_id: Source experiment ID.
+            continue_from_optimized: When True, use the source's best
+                iteration prompt as the new experiment's initial prompt.
+            initial_prompt_override: Optional explicit initial prompt
+                text. Ignored if ``continue_from_optimized`` is True.
+
+        Returns:
+            The newly created experiment (with a ``modelUnavailable`` flag
+            set when the source's target model is no longer available in
+            the workspace).
+        """
+        body: dict[str, Any] = {}
+        if continue_from_optimized:
+            body["continueFromOptimized"] = True
+        if initial_prompt_override is not None:
+            body["initialPromptOverride"] = initial_prompt_override
+        return self._post(f"/experiments/{experiment_id}/duplicate", json=body)
+
     # ── Observations ─────────────────────────────────────────────────
 
     def list_observations(self, experiment_id: str) -> ObservationList:
@@ -785,6 +819,40 @@ class AsyncPrompticClient:
     async def start_experiment(self, experiment_id: str) -> ExperimentStarted:
         """Start a pending experiment (enqueue for training)."""
         return await self._post(f"/experiments/{experiment_id}/start")
+
+    async def duplicate_experiment(
+        self,
+        experiment_id: str,
+        *,
+        continue_from_optimized: bool = False,
+        initial_prompt_override: str | None = None,
+    ) -> Experiment:
+        """Duplicate an experiment (clones observations + evaluators).
+
+        Creates a new experiment under the same AI component as the source.
+        By default the new experiment starts from the source's initial
+        prompt; pass ``continue_from_optimized=True`` to seed it from the
+        source's best optimized prompt instead (the "continue" flow), or
+        ``initial_prompt_override`` to override with custom text.
+
+        Args:
+            experiment_id: Source experiment ID.
+            continue_from_optimized: When True, use the source's best
+                iteration prompt as the new experiment's initial prompt.
+            initial_prompt_override: Optional explicit initial prompt
+                text. Ignored if ``continue_from_optimized`` is True.
+
+        Returns:
+            The newly created experiment (with a ``modelUnavailable`` flag
+            set when the source's target model is no longer available in
+            the workspace).
+        """
+        body: dict[str, Any] = {}
+        if continue_from_optimized:
+            body["continueFromOptimized"] = True
+        if initial_prompt_override is not None:
+            body["initialPromptOverride"] = initial_prompt_override
+        return await self._post(f"/experiments/{experiment_id}/duplicate", json=body)
 
     # ── Observations ─────────────────────────────────────────────────
 

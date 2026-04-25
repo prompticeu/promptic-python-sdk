@@ -146,3 +146,85 @@ class TestTracesCommands:
         with _mock_config_none():
             result = runner.invoke(app, ["traces", "list"])
             assert result.exit_code == 1
+
+
+class TestExperimentsCommands:
+    def _new_exp_payload(self) -> dict:
+        return {
+            "id": "new-exp-id",
+            "name": "Run 2",
+            "experimentStatus": "pending",
+            "targetModel": "gpt-5.4-nano",
+            "modelUnavailable": False,
+        }
+
+    def test_duplicate_calls_client_with_no_flags(self):
+        with (
+            _mock_config(),
+            _mock_client("experiments", "duplicate_experiment", self._new_exp_payload()) as patched,
+        ):
+            result = runner.invoke(app, ["experiments", "duplicate", "src-exp-id", "--json"])
+            assert result.exit_code == 0
+            output = json.loads(result.stdout)
+            assert output["id"] == "new-exp-id"
+
+            mock_client = patched.return_value
+            mock_client.duplicate_experiment.assert_called_once_with(
+                "src-exp-id", initial_prompt_override=None
+            )
+
+    def test_duplicate_with_initial_prompt_override(self):
+        with (
+            _mock_config(),
+            _mock_client("experiments", "duplicate_experiment", self._new_exp_payload()) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "duplicate",
+                    "src-exp-id",
+                    "-p",
+                    "custom prompt",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            mock_client = patched.return_value
+            mock_client.duplicate_experiment.assert_called_once_with(
+                "src-exp-id", initial_prompt_override="custom prompt"
+            )
+
+    def test_duplicate_with_start(self):
+        with (
+            _mock_config(),
+            _mock_client("experiments", "duplicate_experiment", self._new_exp_payload()) as patched,
+        ):
+            mock_client = patched.return_value
+            # Configure start_experiment too so the chained call lands on the same mock.
+            mock_client.start_experiment.return_value = {"status": "scheduled"}
+
+            result = runner.invoke(app, ["experiments", "duplicate", "src-exp-id", "--start"])
+            assert result.exit_code == 0
+            mock_client.duplicate_experiment.assert_called_once()
+            mock_client.start_experiment.assert_called_once_with("new-exp-id")
+
+    def test_continue_passes_continue_from_optimized(self):
+        with (
+            _mock_config(),
+            _mock_client("experiments", "duplicate_experiment", self._new_exp_payload()) as patched,
+        ):
+            result = runner.invoke(app, ["experiments", "continue", "src-exp-id", "--json"])
+            assert result.exit_code == 0
+            mock_client = patched.return_value
+            mock_client.duplicate_experiment.assert_called_once_with(
+                "src-exp-id", continue_from_optimized=True
+            )
+
+    def test_continue_warns_on_unavailable_model(self):
+        payload = self._new_exp_payload()
+        payload["modelUnavailable"] = True
+        with _mock_config(), _mock_client("experiments", "duplicate_experiment", payload):
+            result = runner.invoke(app, ["experiments", "continue", "src-exp-id"])
+            assert result.exit_code == 0
+            assert "no longer available" in result.stdout
