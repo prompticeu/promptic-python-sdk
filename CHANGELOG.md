@@ -5,6 +5,8 @@
 ## Features
 
 - Added `experiments duplicate` and `experiments continue` CLI commands (and `PrompticClient.duplicate_experiment` / `AsyncPrompticClient.duplicate_experiment`) to clone an experiment with its observations and evaluators. `continue` seeds the new experiment from the source's best optimized prompt; both commands accept `--start` to enqueue the new run immediately.
+- `evaluators add` now accepts `--instructions/-i` (shorthand for `config={"instructions": ...}`) and `--config-file/-c` (arbitrary JSON config payload, e.g. `{"messages": [...]}` for `generalJudge`). Added `--description/-d` flag.
+- New `evaluators update <exp> <eval>` CLI command, mirroring `client.update_evaluator(...)` — swap a judge's prompt or scale in place instead of delete-and-recreate.
 
 ## v0.13.0 (2026-04-22)
 
