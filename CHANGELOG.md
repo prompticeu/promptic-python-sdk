@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+## Features
+
+- Added `experiments duplicate` and `experiments continue` CLI commands (and `PrompticClient.duplicate_experiment` / `AsyncPrompticClient.duplicate_experiment`) to clone an experiment with its observations and evaluators. `continue` seeds the new experiment from the source's best optimized prompt; both commands accept `--start` to enqueue the new run immediately.
+
 ## v0.13.0 (2026-04-22)
 
 ## Features

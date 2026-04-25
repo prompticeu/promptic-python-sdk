@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -226,3 +227,85 @@ def start_experiment(
         return
 
     console.print(f"[green]Experiment started.[/green] Status: {result['status']}")
+
+
+def _print_duplicated_experiment(result: Mapping[str, Any], *, source_id: str, kind: str) -> None:
+    """Render the new experiment after a duplicate/continue call."""
+    console.print(f"[green]Experiment {kind} from[/green] {source_id}")
+    console.print(f"  New ID:  {result['id']}")
+    console.print(f"  Name:    {result['name'] or '-'}")
+    console.print(f"  Status:  {result['experimentStatus']}")
+    console.print(f"  Model:   {result['targetModel']}")
+    if result.get("modelUnavailable"):
+        console.print(
+            "[yellow]Warning:[/yellow] the source's target model is no longer "
+            "available in this workspace; update it before starting."
+        )
+
+
+@experiments_app.command("duplicate")
+def duplicate_experiment(
+    experiment_id: str = typer.Argument(help="Source experiment ID."),
+    initial_prompt: Annotated[
+        str | None,
+        typer.Option(
+            "--initial-prompt",
+            "-p",
+            help="Override the initial prompt of the new experiment.",
+        ),
+    ] = None,
+    start: bool = typer.Option(
+        False, "--start", help="Immediately start the new experiment after creating it."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Duplicate an experiment (clones observations + evaluators).
+
+    The new experiment lives on the same AI component and starts from the
+    source's initial prompt (or ``--initial-prompt`` if provided). Use
+    ``promptic experiments continue`` to seed from the source's best
+    optimized prompt instead.
+    """
+    with get_client() as client:
+        result = client.duplicate_experiment(experiment_id, initial_prompt_override=initial_prompt)
+        if start:
+            client.start_experiment(result["id"])
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    _print_duplicated_experiment(result, source_id=experiment_id, kind="duplicated")
+    if start:
+        console.print("[green]New experiment started.[/green]")
+
+
+@experiments_app.command("continue")
+def continue_experiment(
+    experiment_id: str = typer.Argument(help="Source experiment ID."),
+    start: bool = typer.Option(
+        False, "--start", help="Immediately start the new experiment after creating it."
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Continue from an experiment's best iteration.
+
+    Creates a new experiment under the same AI component, copying
+    observations + evaluators from the source, and seeds the initial
+    prompt from the source's best optimized iteration. Useful for chaining
+    optimization runs after promising results.
+    """
+    with get_client() as client:
+        result = client.duplicate_experiment(experiment_id, continue_from_optimized=True)
+        if start:
+            client.start_experiment(result["id"])
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    _print_duplicated_experiment(result, source_id=experiment_id, kind="continued")
+    if start:
+        console.print("[green]New experiment started.[/green]")

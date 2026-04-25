@@ -157,6 +157,65 @@ class TestPrompticClient:
 
         assert result["variables"] == {"input": "in"}
 
+    def test_duplicate_experiment_default(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with PrompticClient() as client:
+            captured: dict = {}
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                captured["url"] = str(request.url)
+                captured["body"] = request.read()
+                return httpx.Response(201, json={"id": "new-exp", "name": "Run 2"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = client.duplicate_experiment("src-exp-id")
+            assert result["id"] == "new-exp"
+            assert "/experiments/src-exp-id/duplicate" in captured["url"]
+            # No flags → empty body, no continueFromOptimized.
+            assert b"continueFromOptimized" not in captured["body"]
+            assert b"initialPromptOverride" not in captured["body"]
+
+    def test_duplicate_experiment_continue_flow(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with PrompticClient() as client:
+            captured: dict = {}
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                captured["body"] = request.read()
+                return httpx.Response(201, json={"id": "new-exp"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            client.duplicate_experiment("src", continue_from_optimized=True)
+            assert b'"continueFromOptimized":true' in captured["body"]
+
+    def test_duplicate_experiment_with_prompt_override(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with PrompticClient() as client:
+            captured: dict = {}
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                captured["body"] = request.read()
+                return httpx.Response(201, json={"id": "new-exp"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            client.duplicate_experiment("src", initial_prompt_override="hello world")
+            assert b'"initialPromptOverride":"hello world"' in captured["body"]
+
 
 class TestAsyncPrompticClient:
     def test_requires_api_key(self):
@@ -273,3 +332,26 @@ class TestAsyncPrompticClient:
             )
 
         assert result == {"data": []}
+
+    @pytest.mark.asyncio
+    async def test_duplicate_experiment_continue_flow(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        async with AsyncPrompticClient() as client:
+            captured: dict = {}
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                captured["url"] = str(request.url)
+                captured["body"] = request.read()
+                return httpx.Response(201, json={"id": "new-exp"})
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = await client.duplicate_experiment("src", continue_from_optimized=True)
+
+        assert result["id"] == "new-exp"
+        assert "/experiments/src/duplicate" in captured["url"]
+        assert b'"continueFromOptimized":true' in captured["body"]
