@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.1 (2026-04-27)
+
+## Bug Fixes
+- Updated EvaluatorType handling after judge module split for improved accuracy in evaluators.
+- Synced experiment response schema with recent removal of initialPrompt field to ensure compatibility.
+
+## Improvements
+- Documentation: Added evalNormalizedScore attribute to Iteration type definition for enhanced clarity.
+
 ## v0.14.0 (2026-04-25)
 
 ## Features
