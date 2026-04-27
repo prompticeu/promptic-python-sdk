@@ -48,7 +48,7 @@ from promptic_sdk.models import (
 )
 from promptic_sdk.tracing import ai_component, dataset, init
 
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 __all__ = [
     "AsyncPrompticClient",
     "PrompticClient",
