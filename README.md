@@ -141,6 +141,63 @@ with promptic_sdk.ai_component("my-component"):
     ...
 ```
 
+### Tracing workflows with custom spans
+
+Most users don't need this. With the right `[extras]` installed, auto-instrumentation already
+creates spans for every LLM and tool call. Reach for custom spans only when you have meaningful
+**non-LLM** workflow logic (retrieval, normalization, business rules, control flow) you want
+represented in the trace.
+
+When you do need it, wrap your workflow stages in custom OpenTelemetry spans. Auto-instrumented LLM and tool spans automatically nest under whichever custom span is active.
+
+```python
+import json
+import promptic_sdk
+from opentelemetry import trace
+
+promptic_sdk.init()
+tracer = trace.get_tracer(__name__)
+
+with promptic_sdk.ai_component("support-agent"):
+    with tracer.start_as_current_span("answer_question") as root:
+        root.set_attribute("traceloop.span.kind", "workflow")
+        root.set_attribute("traceloop.entity.input", json.dumps(user_input))
+
+        with tracer.start_as_current_span("retrieve_context") as span:
+            span.set_attribute("traceloop.span.kind", "task")
+            span.set_attribute("traceloop.entity.input", json.dumps(query))
+            context = retrieve(query)
+            span.set_attribute("traceloop.entity.output", json.dumps(context))
+
+        with tracer.start_as_current_span("generate_answer") as span:
+            span.set_attribute("traceloop.span.kind", "task")
+            # The auto-instrumented LLM call nests under this task span
+            answer = llm_call(context)
+
+        root.set_attribute("traceloop.entity.output", json.dumps(answer))
+```
+
+Span attribute conventions:
+
+- `traceloop.span.kind="workflow"` — the top-level run
+- `traceloop.span.kind="task"` — an internal pipeline stage
+- `traceloop.entity.input` / `traceloop.entity.output` — JSON-serialized stage payloads, surfaced in the Promptic UI
+
+For large payloads, log a small preview plus a count rather than the full object — traces are not designed to store data:
+
+```python
+span.set_attribute(
+    "traceloop.entity.output",
+    json.dumps({
+        "items": items[:5],
+        "item_count": len(items),
+        "additional_item_count": max(len(items) - 5, 0),
+    }),
+)
+```
+
+See the [Tracing guide](https://promptic.eu/docs/guides/tracing#tracing-workflows-with-custom-spans) for the full pattern.
+
 ## API client
 
 Both a sync (`PrompticClient`) and async (`AsyncPrompticClient`) client are available. They share the same method signatures and return types.
