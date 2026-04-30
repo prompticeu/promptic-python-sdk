@@ -1,7 +1,7 @@
 [project]
 requires-python = ">=3.11"
 name = "promptic-sdk"
-version = "0.14.1"
+version = "0.14.2"
 description = "Python SDK for the Promptic platform — tracing, API client, and CLI."
 readme = "README.md"
 authors = [
