@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14.2 (2026-04-30)
+
+## Bug Fixes
+
+- Improved tracing reliability by splitting oversized OTLP batches when receiving HTTP 413 errors.
+
+## Improvements
+
+- Added documentation for custom workflow span tracing patterns.
+
 ## Unreleased
 
 ## Bug Fixes
