@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+## Bug Fixes
+
+- Tracing: oversized OTLP span batches (chatty agent traces with large message attributes) were being rejected by the Promptic ingest with HTTP 413 and silently dropped. The SDK now wraps the OTLP exporter in a bisecting wrapper that, on a 413 response, halves the batch and retries each half recursively. Single spans that are too large are dropped with a clear error log instead of breaking the export pipeline.
+
 ## v0.14.1 (2026-04-27)
 
 ## Bug Fixes

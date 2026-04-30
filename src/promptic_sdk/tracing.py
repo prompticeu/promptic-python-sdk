@@ -93,6 +93,78 @@ class _LoggingExporter(SpanExporter):
         return self._inner.force_flush(timeout_millis)
 
 
+class _BodyTooLargeError(Exception):
+    """Raised when the OTLP server rejects a batch with HTTP 413."""
+
+
+class _OTLPSpanExporter413Aware(OTLPSpanExporter):
+    """``OTLPSpanExporter`` that surfaces 413 responses as a typed exception.
+
+    The base class only returns ``SpanExportResult.SUCCESS`` / ``FAILURE`` and
+    swallows the HTTP status code. We need to distinguish "batch too big"
+    (recoverable by bisecting) from every other failure (not recoverable
+    that way), so we override ``_export`` to inspect the response and raise
+    ``_BodyTooLargeError`` on 413. The exception propagates past the parent's
+    ``RequestException`` handler and reaches our :class:`_BisectingExporter`.
+    """
+
+    def _export(self, serialized_data: bytes, timeout_sec: float | None = None):
+        resp = super()._export(serialized_data, timeout_sec)
+        if resp.status_code == 413:
+            raise _BodyTooLargeError(
+                f"OTLP server rejected payload of {len(serialized_data)} bytes "
+                f"with HTTP 413 (Request Entity Too Large)"
+            )
+        return resp
+
+
+class _BisectingExporter(SpanExporter):
+    """Wraps an exporter so that oversized batches are halved and retried.
+
+    The wrapped exporter is expected to raise :class:`_BodyTooLargeError`
+    when the server rejects a batch with HTTP 413. This wrapper recursively
+    bisects the batch until either each half fits or only one span is left
+    (single span over the limit → drop it and log; one span can't be split).
+
+    Other failure modes (auth errors, network errors, generic 5xx) are not
+    retried here — the inner exporter's own retry policy handles those, and
+    bisecting wouldn't help anyway.
+    """
+
+    def __init__(self, inner: SpanExporter) -> None:
+        self._inner = inner
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        try:
+            return self._inner.export(spans)
+        except _BodyTooLargeError as exc:
+            if len(spans) <= 1:
+                logger.error(
+                    "Promptic: dropping a single oversized span — %s. "
+                    "Reduce per-span attribute sizes (e.g. truncate large "
+                    "tool inputs/outputs).",
+                    exc,
+                )
+                return SpanExportResult.FAILURE
+            mid = len(spans) // 2
+            logger.debug(
+                "Promptic: OTLP batch of %d spans exceeded server body limit; "
+                "bisecting and retrying.",
+                len(spans),
+            )
+            left = self.export(spans[:mid])
+            right = self.export(spans[mid:])
+            if left == SpanExportResult.SUCCESS and right == SpanExportResult.SUCCESS:
+                return SpanExportResult.SUCCESS
+            return SpanExportResult.FAILURE
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
 class _ComponentAttributeProcessor(SpanProcessor):
     """Add ``promptic.ai_component`` attribute to spans inside :func:`ai_component`."""
 
@@ -145,10 +217,22 @@ def init(
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
+    # Layered exporter:
+    #   _LoggingExporter      → emits a one-time WARNING on the first failure
+    #   _BisectingExporter    → on HTTP 413, halves the batch and retries
+    #   _OTLPSpanExporter413Aware → raises _BodyTooLargeError for 413 so the
+    #                                bisecter sees it (instead of the parent
+    #                                swallowing it as a generic FAILURE)
+    #
+    # With this stack, oversized batches recover transparently. We keep
+    # OTel's default `max_export_batch_size` (512) because the bisecter
+    # makes overflow free.
     exporter = _LoggingExporter(
-        OTLPSpanExporter(
-            endpoint=traces_endpoint,
-            headers={"Authorization": f"Bearer {api_key}"},
+        _BisectingExporter(
+            _OTLPSpanExporter413Aware(
+                endpoint=traces_endpoint,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
         )
     )
 
