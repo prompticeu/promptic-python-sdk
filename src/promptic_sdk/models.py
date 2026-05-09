@@ -348,6 +348,26 @@ class TracingStats(TypedDict):
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
+AgentEvaluatorType = Literal[
+    "loop",
+    "tool_error",
+    "unused_tool",
+    "cost_hotspot",
+    "termination",
+    "efficiency",
+    "tool_selection_accuracy",
+    "plan_adherence",
+    "reasoning_coherence",
+]
+"""Type tags emitted in `Insight.type` and `InsightResult.enabledTypes`.
+
+The first five (`loop`..`termination`) are heuristic insights returned in
+`InsightResult.insights[]`. The last four are predefined LLM judges whose
+per-run results are returned in `InsightResult.judgeResults[]` instead, so
+they normally do not appear in `Insight.type`. The `enabledTypes` field
+lists the effective evaluator set that ran for this evaluation.
+"""
+LLMJudgeRunStatus = Literal["passed", "issue", "skipped", "failed"]
 
 
 class DatasetItem(TypedDict):
@@ -478,11 +498,53 @@ class InsightResultMeta(TypedDict):
     analyzedAt: str
 
 
-class InsightResult(TypedDict):
-    """Full insight result from an evaluation."""
+class LLMJudgeRunResult(TypedDict):
+    """Per-run verdict from an LLM judge (custom rubric or predefined)."""
+
+    runId: str
+    traceId: str
+    status: LLMJudgeRunStatus
+    title: str | None
+    description: str | None
+    severity: str | None
+    rationale: str | None
+    suggestedFix: str | None
+    citedSpanIds: list[str]
+    navigationMode: str
+    errorLabel: str | None
+    errorMessage: str | None
+    # Numeric score in [0, 1] for predefined judges (e.g. efficiency,
+    # plan_adherence). None for verdict-only judges (custom rubrics) or
+    # when status="skipped".
+    value: float | None
+    metadata: dict[str, Any]
+
+
+class LLMJudgeSummary(TypedDict):
+    """Aggregate result for one judge across all runs in the evaluation."""
+
+    judgeName: str
+    instructions: str
+    frequency: float
+    totalRuns: int
+    affectedRunIds: list[str]
+    passedRunIds: list[str]
+    failedRunIds: list[str]
+    results: list[LLMJudgeRunResult]
+
+
+class InsightResult(TypedDict, total=False):
+    """Full insight result from an evaluation.
+
+    `insights` and `meta` are always present. `judgeResults` and
+    `enabledTypes` were added when predefined LLM judges shipped — older
+    evaluations may omit them.
+    """
 
     insights: list[Insight]
     meta: InsightResultMeta
+    judgeResults: list[LLMJudgeSummary]
+    enabledTypes: list[AgentEvaluatorType]
 
 
 class AgentEvaluation(TypedDict):
