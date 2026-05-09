@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -533,18 +533,18 @@ class LLMJudgeSummary(TypedDict):
     results: list[LLMJudgeRunResult]
 
 
-class InsightResult(TypedDict, total=False):
+class InsightResult(TypedDict):
     """Full insight result from an evaluation.
 
     `insights` and `meta` are always present. `judgeResults` and
     `enabledTypes` were added when predefined LLM judges shipped — older
-    evaluations may omit them.
+    evaluations may omit them, so they are typed as ``NotRequired``.
     """
 
     insights: list[Insight]
     meta: InsightResultMeta
-    judgeResults: list[LLMJudgeSummary]
-    enabledTypes: list[AgentEvaluatorType]
+    judgeResults: NotRequired[list[LLMJudgeSummary]]
+    enabledTypes: NotRequired[list[AgentEvaluatorType]]
 
 
 class AgentEvaluation(TypedDict):
