@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.3 (2026-05-20)
+
+## Bug Fixes
+
+- Improved tracing to correctly preserve OpenAI image inputs.
+
 ## v0.14.2 (2026-04-30)
 
 ## Bug Fixes
