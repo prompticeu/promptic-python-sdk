@@ -1,5 +1,6 @@
 """Tests for the tracing module."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, Sp
 
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
+    _auto_instrument,
     _BisectingExporter,
     _BodyTooLargeError,
     _ComponentAttributeProcessor,
@@ -205,6 +207,31 @@ class TestBisectingExporter:
         bisecter = _BisectingExporter(_Inner())
         with pytest.raises(RuntimeError, match="auth broken"):
             bisecter.export([MagicMock()])
+
+
+class TestAutoInstrument:
+    def test_openai_instrumentor_disables_default_image_uploader(self, monkeypatch):
+        calls: list[object] = []
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+
+            def instrument(self):
+                calls.append("instrumented")
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [("opentelemetry.instrumentation.openai", "OpenAIInstrumentor")],
+        )
+
+        with patch(
+            "importlib.import_module",
+            return_value=SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor),
+        ):
+            _auto_instrument()
+
+        assert calls == [{"upload_base64_image": None}, "instrumented"]
 
 
 class TestAiComponent:

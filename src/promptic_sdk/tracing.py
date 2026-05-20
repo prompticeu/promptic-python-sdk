@@ -63,6 +63,19 @@ _INSTRUMENTORS: list[tuple[str, str]] = [
     ("opentelemetry.instrumentation.claude_agent_sdk", "ClaudeAgentSdkInstrumentor"),
 ]
 
+_OPENAI_INSTRUMENTATION_MODULE = "opentelemetry.instrumentation.openai"
+
+
+def _instrumentor_init_kwargs(module_path: str) -> dict[str, object]:
+    """Return compatibility kwargs for instrumentors that need SDK defaults."""
+    if module_path == _OPENAI_INSTRUMENTATION_MODULE:
+        # OpenLLMetry's OpenAI image prompt extraction awaits this optional hook.
+        # Its default no-op is sync in some releases, which drops multimodal input
+        # capture behind a swallowed TypeError. Passing None keeps inline image
+        # references in gen_ai.input.messages until Promptic has media storage.
+        return {"upload_base64_image": None}
+    return {}
+
 
 class _LoggingExporter(SpanExporter):
     """Wraps an exporter to log failures instead of silently dropping spans."""
@@ -389,7 +402,7 @@ def _auto_instrument() -> None:
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
-            instrumentor_cls().instrument()
+            instrumentor_cls(**_instrumentor_init_kwargs(module_path)).instrument()
             logger.debug("Promptic: enabled %s.%s", module_path, class_name)
         except ImportError:
             # Distinguish "package not installed" from "package broken internally".
