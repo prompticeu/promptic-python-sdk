@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import contextvars
+import inspect
 import logging
 import os
 from collections.abc import Iterator, Sequence
@@ -122,7 +123,11 @@ class _OTLPSpanExporter413Aware(OTLPSpanExporter):
     """
 
     def _export(self, serialized_data: bytes, timeout_sec: float | None = None):
-        resp = super()._export(serialized_data, timeout_sec)
+        parent_export = super()._export
+        if "timeout_sec" in inspect.signature(parent_export).parameters:
+            resp = parent_export(serialized_data, timeout_sec)
+        else:
+            resp = parent_export(serialized_data)
         if resp.status_code == 413:
             raise _BodyTooLargeError(
                 f"OTLP server rejected payload of {len(serialized_data)} bytes "
