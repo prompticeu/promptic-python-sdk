@@ -304,7 +304,13 @@ class PrompticClient:
         self._delete(f"/experiments/{experiment_id}")
 
     def start_experiment(self, experiment_id: str) -> ExperimentStarted:
-        """Start a pending experiment (enqueue for training)."""
+        """Start a pending experiment (enqueue for training).
+
+        Raises:
+            PrompticAPIError: ``402`` when platform billing is enabled and the
+                workspace's organization has no active subscription and payment
+                method, or is blocked by the free-tier limit.
+        """
         return self._post(f"/experiments/{experiment_id}/start")
 
     def duplicate_experiment(
@@ -539,6 +545,11 @@ class PrompticClient:
             dataset_id: Dataset ID to evaluate.
             name: Optional evaluation name.
             run_id: Optional run ID to associate with.
+
+        Raises:
+            PrompticAPIError: ``402`` when platform billing is enabled and the
+                workspace's organization has no active subscription and payment
+                method, or is blocked by the free-tier limit.
         """
         body: dict[str, Any] = {"datasetId": dataset_id}
         if name is not None:
@@ -817,7 +828,13 @@ class AsyncPrompticClient:
         await self._delete(f"/experiments/{experiment_id}")
 
     async def start_experiment(self, experiment_id: str) -> ExperimentStarted:
-        """Start a pending experiment (enqueue for training)."""
+        """Start a pending experiment (enqueue for training).
+
+        Raises:
+            PrompticAPIError: ``402`` when platform billing is enabled and the
+                workspace's organization has no active subscription and payment
+                method, or is blocked by the free-tier limit.
+        """
         return await self._post(f"/experiments/{experiment_id}/start")
 
     async def duplicate_experiment(
@@ -1042,7 +1059,13 @@ class AsyncPrompticClient:
         name: str | None = None,
         run_id: str | None = None,
     ) -> AgentEvaluation:
-        """Start an evaluation on a dataset."""
+        """Start an evaluation on a dataset.
+
+        Raises:
+            PrompticAPIError: ``402`` when platform billing is enabled and the
+                workspace's organization has no active subscription and payment
+                method, or is blocked by the free-tier limit.
+        """
         body: dict[str, Any] = {"datasetId": dataset_id}
         if name is not None:
             body["name"] = name
