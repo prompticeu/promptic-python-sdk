@@ -9,6 +9,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 
+import promptic_sdk.tracing as tracing_module
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
     ArtifactReference,
@@ -21,6 +22,7 @@ from promptic_sdk.tracing import (
     _current_component,
     _OTLPSpanExporter413Aware,
     ai_component,
+    artifact,
     init,
 )
 
@@ -36,6 +38,8 @@ class TestInit:
     def teardown_method(self):
         """Reset global tracer provider after each test."""
         _reset_tracer_provider()
+        tracing_module._configured_api_key = None  # noqa: SLF001
+        tracing_module._configured_endpoint = None  # noqa: SLF001
 
     def test_init_requires_api_key(self):
         with pytest.raises(ValueError, match="API key is required"):
@@ -125,6 +129,19 @@ class TestInit:
         tracer = provider.get_tracer("promptic_sdk.test")
         with tracer.start_as_current_span("smoke"):
             pass
+
+    def test_repeated_init_does_not_replace_artifact_credentials(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_first")
+        with patch(
+            "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+            return_value=MagicMock(),
+        ):
+            init(endpoint="https://first.example", auto_instrument=False)
+
+        init(api_key="pk_second", endpoint="https://second.example", auto_instrument=False)
+
+        assert tracing_module._configured_api_key == "pk_first"  # noqa: SLF001
+        assert tracing_module._configured_endpoint == "https://first.example"  # noqa: SLF001
 
 
 class TestBisectingExporter:
@@ -384,6 +401,62 @@ class TestArtifactUploader:
         assert fake_client.calls[2][2]["json"]["storageObjectId"] == "storage-object-id"
         assert "contentBase64" not in fake_client.calls[2][2]["json"]
 
+    def test_direct_upload_uses_windows_basename_for_source_path(self):
+        class FakeResponse:
+            def __init__(self, data=None):
+                self.status_code = 200
+                self._data = data or {}
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                        }
+                    )
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "application/pdf",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                return FakeResponse()
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="application/pdf",
+                source_path=r"C:\tmp\report.pdf",
+            )
+
+        assert fake_client.calls[0][2]["json"]["filename"] == "report.pdf"
+
     def test_upload_falls_back_to_server_upload_when_presign_is_missing(self):
         class FakeResponse:
             def __init__(self, status_code=200, data=None):
@@ -431,6 +504,36 @@ class TestArtifactUploader:
         assert ref is not None
         assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
         assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
+
+
+class TestArtifactHelper:
+    def test_missing_path_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("/tmp/definitely-missing-report.pdf")
+
+    def test_plain_text_string_is_uploaded_as_text(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact("plain text content")
+
+        assert ref.id == "artifact-id"
+        assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
 
 
 class TestAiComponent:

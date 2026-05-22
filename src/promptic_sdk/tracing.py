@@ -12,11 +12,10 @@ import json
 import logging
 import mimetypes
 import os
-import posixpath
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Protocol
 
 import httpx
@@ -188,7 +187,7 @@ class _ArtifactUploader:
         preview: str | None,
         sha256: str,
     ) -> dict[str, Any] | None:
-        filename = posixpath.basename(source_path) if source_path != "$" else "artifact"
+        filename = _source_path_name(source_path)
         if "." not in filename:
             filename = f"{filename}{mimetypes.guess_extension(mime_type) or ''}"
 
@@ -355,6 +354,26 @@ def _json_loads_maybe(value: str) -> Any | None:
         return json.loads(stripped)
     except Exception:
         return None
+
+
+def _source_path_name(source_path: str) -> str:
+    if source_path == "$":
+        return "artifact"
+    if "\\" in source_path:
+        return PureWindowsPath(source_path).name or "artifact"
+    return Path(source_path).name or "artifact"
+
+
+def _looks_like_path(value: str) -> bool:
+    if "\n" in value or "\r" in value:
+        return False
+    if value.startswith(("~", ".", os.sep)):
+        return True
+    if "\\" in value or "/" in value:
+        return True
+    if len(value) >= 3 and value[1] == ":" and value[0].isalpha():
+        return True
+    return bool(Path(value).suffix and " " not in value)
 
 
 class _ArtifactUploadBackend(Protocol):
@@ -635,6 +654,12 @@ def artifact(
         resolved_mime_type = mime_type or "application/octet-stream"
         source_path = "$"
     elif isinstance(value, str):
+        if _looks_like_path(value):
+            msg = (
+                f"Artifact file path does not exist: {value!r}. "
+                "Pass bytes/text explicitly for inline artifact content."
+            )
+            raise FileNotFoundError(msg)
         content = value.encode("utf-8")
         resolved_mime_type = mime_type or "text/plain"
         source_path = "$"
@@ -684,8 +709,9 @@ def init(
         raise ValueError(msg)
 
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
-    _configured_api_key = api_key
-    _configured_endpoint = endpoint
+    if getattr(trace._TRACER_PROVIDER_SET_ONCE, "_done", False):  # noqa: SLF001
+        logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
+        return
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
     # Layered exporter:
@@ -721,6 +747,8 @@ def init(
     provider.add_span_processor(_ComponentAttributeProcessor())
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
+    _configured_api_key = api_key
+    _configured_endpoint = endpoint
 
     # Ensure all spans are flushed when the process exits.
     atexit.register(provider.shutdown)
