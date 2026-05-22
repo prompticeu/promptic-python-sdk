@@ -75,6 +75,35 @@ class TestPrompticClient:
             result = client.get_trace("abc123")
             assert result == response_data
 
+    def test_get_artifact_content_follows_redirect(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        requests: list[httpx.Request] = []
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                if request.url.path == "/api/v1/artifacts/artifact-id/content":
+                    return httpx.Response(
+                        307,
+                        headers={"Location": "https://storage.example/artifact.png"},
+                    )
+                if str(request.url) == "https://storage.example/artifact.png":
+                    return httpx.Response(200, content=b"artifact-bytes")
+                return httpx.Response(404, json={"error": "not found"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert client.get_artifact_content("artifact-id") == b"artifact-bytes"
+            assert [str(request.url) for request in requests] == [
+                "https://promptic.eu/api/v1/artifacts/artifact-id/content",
+                "https://storage.example/artifact.png",
+            ]
+
     def test_download_artifact_does_not_truncate_existing_file_on_failure(
         self, monkeypatch, tmp_path
     ):
@@ -322,6 +351,35 @@ class TestAsyncPrompticClient:
 
             result = await client.get_trace("abc123")
             assert result == response_data
+
+    async def test_get_artifact_content_follows_redirect(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        requests: list[httpx.Request] = []
+
+        async with AsyncPrompticClient() as client:
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                if request.url.path == "/api/v1/artifacts/artifact-id/content":
+                    return httpx.Response(
+                        307,
+                        headers={"Location": "https://storage.example/artifact.png"},
+                    )
+                if str(request.url) == "https://storage.example/artifact.png":
+                    return httpx.Response(200, content=b"artifact-bytes")
+                return httpx.Response(404, json={"error": "not found"})
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert await client.get_artifact_content("artifact-id") == b"artifact-bytes"
+            assert [str(request.url) for request in requests] == [
+                "https://promptic.eu/api/v1/artifacts/artifact-id/content",
+                "https://storage.example/artifact.png",
+            ]
 
     async def test_get_stats(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")

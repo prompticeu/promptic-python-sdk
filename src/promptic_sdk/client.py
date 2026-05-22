@@ -180,7 +180,7 @@ class PrompticClient:
         return self._request("GET", path, params=params)
 
     def _get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> bytes:
-        resp = self._client.request("GET", path, params=params)
+        resp = self._client.request("GET", path, params=params, follow_redirects=True)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
@@ -735,7 +735,7 @@ class AsyncPrompticClient:
         return await self._request("GET", path, params=params)
 
     async def _get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> bytes:
-        resp = await self._client.request("GET", path, params=params)
+        resp = await self._client.request("GET", path, params=params, follow_redirects=True)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
