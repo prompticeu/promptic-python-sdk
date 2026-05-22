@@ -75,6 +75,26 @@ class TestPrompticClient:
             result = client.get_trace("abc123")
             assert result == response_data
 
+    def test_download_artifact_does_not_truncate_existing_file_on_failure(
+        self, monkeypatch, tmp_path
+    ):
+        target = tmp_path / "artifact.bin"
+        target.write_bytes(b"existing")
+
+        client = PrompticClient(api_key="pk_test")
+
+        def fail_get_content(_artifact_id: str) -> bytes:
+            msg = "download failed"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(client, "get_artifact_content", fail_get_content)
+
+        with pytest.raises(RuntimeError, match="download failed"):
+            client.download_artifact("artifact-id", target)
+
+        assert target.read_bytes() == b"existing"
+        client.close()
+
     def test_get_stats(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {

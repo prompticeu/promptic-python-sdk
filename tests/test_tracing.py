@@ -535,6 +535,35 @@ class TestArtifactHelper:
         assert ref.id == "artifact-id"
         assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
 
+    def test_url_like_string_is_uploaded_as_text(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact("https://example.com/report.pdf")
+
+        assert ref.id == "artifact-id"
+        assert calls == [
+            (
+                b"https://example.com/report.pdf",
+                "text/plain",
+                "$",
+                "https://example.com/report.pdf",
+            )
+        ]
+
 
 class TestAiComponent:
     """Tests for the ai_component() context manager and _ComponentAttributeProcessor."""

@@ -232,8 +232,8 @@ class PrompticClient:
 
     def download_artifact(self, artifact_id: str, path: str | os.PathLike[str]) -> None:
         """Download artifact bytes to a local path."""
-        with open(path, "wb") as f:
-            f.write(self.get_artifact_content(artifact_id))
+        content = self.get_artifact_content(artifact_id)
+        Path(path).write_bytes(content)
 
     def get_stats(self, *, days_back: int = 30) -> TracingStats:
         """Get aggregated tracing stats."""

@@ -365,15 +365,18 @@ def _source_path_name(source_path: str) -> str:
 
 
 def _looks_like_path(value: str) -> bool:
-    if "\n" in value or "\r" in value:
+    stripped = value.strip()
+    if not stripped or stripped != value or "\n" in value or "\r" in value:
         return False
-    if value.startswith(("~", ".", os.sep)):
+    if stripped.lower().startswith(("http://", "https://", "data:")):
+        return False
+    if stripped.startswith(("~/", "~\\", "./", ".\\", "../", "..\\")):
         return True
-    if "\\" in value or "/" in value:
+    if stripped.startswith(("/", "\\")):
         return True
-    if len(value) >= 3 and value[1] == ":" and value[0].isalpha():
+    if len(stripped) >= 3 and stripped[1] == ":" and stripped[0].isalpha():
         return True
-    return bool(Path(value).suffix and " " not in value)
+    return bool(("\\" in stripped or "/" in stripped) and Path(_source_path_name(stripped)).suffix)
 
 
 class _ArtifactUploadBackend(Protocol):
