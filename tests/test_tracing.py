@@ -10,6 +10,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, Sp
 
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
+    ArtifactReference,
+    _ArtifactSanitizer,
+    _ArtifactUploader,
     _auto_instrument,
     _BisectingExporter,
     _BodyTooLargeError,
@@ -233,7 +236,156 @@ class TestAutoInstrument:
 
         assert calls == [{"upload_base64_image": None}, "instrumented"]
 
+class TestArtifactSanitizer:
+    def test_rewrites_json_data_uri_into_artifact_reference(self):
+        uploads: list[tuple[bytes, str, str]] = []
 
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        encoded = "aGVsbG8gaGVsbG8gaGVsbG8="
+        value = (
+            '[{"role":"user","content":[{"type":"image_url","image_url":'
+            f'{{"url":"data:image/png;base64,{encoded}"}}}}]}}]'
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                b"hello hello hello",
+                "image/png",
+                "gen_ai.input.messages[0].content[0].image_url.url",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+
+class TestArtifactUploader:
+    def test_upload_prefers_direct_storage_upload(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                            "headers": {"x-ms-blob-type": "BlockBlob"},
+                        }
+                    )
+                if url.endswith("/api/v1/artifacts"):
+                    return FakeResponse(
+                        data={
+                            "id": "artifact-id",
+                            "uri": "promptic-artifact://artifact-id",
+                            "mimeType": "image/png",
+                            "sizeBytes": 5,
+                            "sha256": "hash",
+                        }
+                    )
+                raise AssertionError(url)
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                return FakeResponse()
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="image/png",
+                source_path="messages[0].image_url.url",
+            )
+
+        assert ref is not None
+        assert ref.id == "artifact-id"
+        assert [call[0] for call in fake_client.calls] == ["POST", "PUT", "POST"]
+        assert fake_client.calls[0][2]["json"]["folder"] == "trace-artifacts"
+        assert fake_client.calls[1][1] == "https://storage.example/upload"
+        assert fake_client.calls[1][2]["content"] == b"hello"
+        assert fake_client.calls[2][2]["json"]["storageObjectId"] == "storage-object-id"
+        assert "contentBase64" not in fake_client.calls[2][2]["json"]
+
+    def test_upload_falls_back_to_server_upload_when_presign_is_missing(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=404)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "text/plain",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
+        assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
 class TestAiComponent:
     """Tests for the ai_component() context manager and _ComponentAttributeProcessor."""
 

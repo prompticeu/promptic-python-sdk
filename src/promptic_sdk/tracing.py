@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import atexit
+import base64
+import binascii
 import contextvars
+import hashlib
+import json
 import logging
+import mimetypes
 import os
-from collections.abc import Iterator, Sequence
+import posixpath
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol
 
+import httpx
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import Event, ReadableSpan, Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 
 logger = logging.getLogger("promptic_sdk")
@@ -64,6 +74,28 @@ _INSTRUMENTORS: list[tuple[str, str]] = [
 ]
 
 _OPENAI_INSTRUMENTATION_MODULE = "opentelemetry.instrumentation.openai"
+_ARTIFACT_URI_SCHEME = "promptic-artifact://"
+_DATA_URI_PREFIX = "data:"
+_GENERIC_BASE64_MIN_BYTES = 8 * 1024
+_LARGE_TEXT_MIN_BYTES = 256 * 1024
+_MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
+_TEXT_PREVIEW_CHARS = 4096
+_MEDIA_PATH_MARKERS = (
+    "image",
+    "img",
+    "audio",
+    "video",
+    "file",
+    "pdf",
+    "blob",
+    "bytes",
+    "base64",
+    "b64",
+    "attachment",
+)
+
+_configured_api_key: str | None = None
+_configured_endpoint: str | None = None
 
 
 def _instrumentor_init_kwargs(module_path: str) -> dict[str, object]:
@@ -108,6 +140,364 @@ class _LoggingExporter(SpanExporter):
 
 class _BodyTooLargeError(Exception):
     """Raised when the OTLP server rejects a batch with HTTP 413."""
+
+
+@dataclass(frozen=True)
+class ArtifactReference:
+    """Reference to an artifact uploaded to Promptic."""
+
+    id: str
+    uri: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+
+    @property
+    def ref(self) -> str:
+        """String reference suitable for OpenTelemetry span attributes."""
+        return self.uri
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a structured JSON-safe artifact reference."""
+        return {
+            "$prompticArtifact": {
+                "id": self.id,
+                "uri": self.uri,
+                "mimeType": self.mime_type,
+                "sizeBytes": self.size_bytes,
+                "sha256": self.sha256,
+            }
+        }
+
+
+class _ArtifactUploader:
+    """Synchronous artifact uploader used by exporter and public helper."""
+
+    def __init__(self, *, endpoint: str, api_key: str) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._api_key = api_key
+
+    def _direct_upload(
+        self,
+        client: httpx.Client,
+        content: bytes,
+        *,
+        mime_type: str,
+        source_path: str,
+        preview: str | None,
+        sha256: str,
+    ) -> dict[str, Any] | None:
+        filename = posixpath.basename(source_path) if source_path != "$" else "artifact"
+        if "." not in filename:
+            filename = f"{filename}{mimetypes.guess_extension(mime_type) or ''}"
+
+        presign_response = client.post(
+            f"{self._endpoint}/api/v1/storage-objects/presign",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "folder": "trace-artifacts",
+                "filename": filename,
+                "contentType": mime_type,
+                "access": "private",
+                "sizeBytes": len(content),
+                "maxSizeBytes": _MAX_ARTIFACT_BYTES,
+            },
+        )
+        if presign_response.status_code == 404:
+            return None
+        presign_response.raise_for_status()
+        presigned = presign_response.json()
+
+        upload_url = presigned.get("uploadUrl")
+        storage_object_id = presigned.get("storageObjectId")
+        if not isinstance(upload_url, str) or not upload_url:
+            logger.warning("Promptic: storage presign response did not include uploadUrl.")
+            return None
+        if not isinstance(storage_object_id, str) or not storage_object_id:
+            logger.warning("Promptic: storage presign response did not include storageObjectId.")
+            return None
+
+        method = str(presigned.get("method") or "PUT").upper()
+        if method == "POST":
+            files = {
+                str(key): (None, str(value))
+                for key, value in dict(presigned.get("fields") or {}).items()
+            }
+            files["file"] = (filename, content, mime_type)
+            upload_response = client.post(upload_url, files=files)
+        else:
+            headers = {
+                str(key): str(value) for key, value in dict(presigned.get("headers") or {}).items()
+            }
+            headers.setdefault("Content-Type", mime_type)
+            upload_response = client.put(upload_url, content=content, headers=headers)
+        upload_response.raise_for_status()
+
+        register_response = client.post(
+            f"{self._endpoint}/api/v1/artifacts",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "storageObjectId": storage_object_id,
+                "mimeType": mime_type,
+                "sizeBytes": len(content),
+                "sha256": sha256,
+                "sourcePath": source_path,
+                "source": "direct_upload",
+                "preview": preview,
+            },
+        )
+        register_response.raise_for_status()
+        return register_response.json()
+
+    def upload(
+        self,
+        content: bytes,
+        *,
+        mime_type: str,
+        source_path: str = "$",
+        preview: str | None = None,
+    ) -> ArtifactReference | None:
+        if len(content) > _MAX_ARTIFACT_BYTES:
+            logger.warning(
+                "Promptic: artifact at %s is too large to upload (%d bytes).",
+                source_path,
+                len(content),
+            )
+            return None
+
+        sha256 = hashlib.sha256(content).hexdigest()
+
+        try:
+            with httpx.Client(timeout=30) as client:
+                data = self._direct_upload(
+                    client,
+                    content,
+                    mime_type=mime_type,
+                    source_path=source_path,
+                    preview=preview,
+                    sha256=sha256,
+                )
+                if data is None:
+                    response = client.post(
+                        f"{self._endpoint}/api/v1/artifacts",
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        json={
+                            "contentBase64": base64.b64encode(content).decode("ascii"),
+                            "mimeType": mime_type,
+                            "sourcePath": source_path,
+                            "preview": preview,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+        except Exception:
+            logger.warning("Promptic: failed to upload trace artifact.", exc_info=True)
+            return None
+
+        artifact_id = data.get("id")
+        uri = data.get("uri") or (f"{_ARTIFACT_URI_SCHEME}{artifact_id}" if artifact_id else None)
+        if not artifact_id or not uri:
+            logger.warning("Promptic: artifact upload returned an invalid response.")
+            return None
+
+        return ArtifactReference(
+            id=str(artifact_id),
+            uri=str(uri),
+            mime_type=str(data.get("mimeType") or mime_type),
+            size_bytes=int(data.get("sizeBytes") or len(content)),
+            sha256=str(data.get("sha256") or sha256),
+        )
+
+
+def _is_media_path(path: str) -> bool:
+    lower = path.lower()
+    return any(marker in lower for marker in _MEDIA_PATH_MARKERS)
+
+
+def _preview_text(value: str) -> str:
+    if len(value) <= _TEXT_PREVIEW_CHARS:
+        return value
+    return f"{value[:_TEXT_PREVIEW_CHARS]}..."
+
+
+def _normalise_base64(value: str) -> bytes | None:
+    compact = "".join(value.split())
+    if len(compact) < 16 or len(compact) % 4 != 0:
+        return None
+    try:
+        content = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not content:
+        return None
+    if base64.b64encode(content).decode("ascii").rstrip("=") != compact.rstrip("="):
+        return None
+    return content
+
+
+def _decode_data_uri(value: str) -> tuple[str, bytes] | None:
+    if not value.startswith(_DATA_URI_PREFIX) or ";base64," not in value:
+        return None
+    header, encoded = value.split(",", 1)
+    mime_type = header[len(_DATA_URI_PREFIX) :].split(";", 1)[0] or "application/octet-stream"
+    content = _normalise_base64(encoded)
+    if content is None:
+        return None
+    return mime_type, content
+
+
+def _json_loads_maybe(value: str) -> Any | None:
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        return json.loads(stripped)
+    except Exception:
+        return None
+
+
+class _ArtifactUploadBackend(Protocol):
+    def upload(
+        self,
+        content: bytes,
+        *,
+        mime_type: str,
+        source_path: str = "$",
+        preview: str | None = None,
+    ) -> ArtifactReference | None: ...
+
+
+class _ArtifactSanitizer:
+    def __init__(self, uploader: _ArtifactUploadBackend) -> None:
+        self._uploader = uploader
+
+    def sanitize_attribute(self, key: str, value: Any) -> Any:
+        return self._sanitize(value, key, prefer_json_roundtrip=True)
+
+    def _artifact_ref(self, ref: ArtifactReference) -> dict[str, Any]:
+        return ref.to_dict()
+
+    def _upload_string(self, value: str, path: str) -> Any:
+        data_uri = _decode_data_uri(value)
+        if data_uri:
+            mime_type, content = data_uri
+            ref = self._uploader.upload(content, mime_type=mime_type, source_path=path)
+            return ref.uri if ref else value
+
+        if not value.startswith(("http://", "https://")) and _is_media_path(path):
+            content = _normalise_base64(value)
+            if content is not None and len(content) >= _GENERIC_BASE64_MIN_BYTES:
+                ref = self._uploader.upload(
+                    content,
+                    mime_type="application/octet-stream",
+                    source_path=path,
+                )
+                return ref.uri if ref else value
+
+        if len(value.encode("utf-8")) >= _LARGE_TEXT_MIN_BYTES:
+            ref = self._uploader.upload(
+                value.encode("utf-8"),
+                mime_type="text/plain",
+                source_path=path,
+                preview=_preview_text(value),
+            )
+            return ref.uri if ref else value
+
+        return value
+
+    def _sanitize(self, value: Any, path: str, *, prefer_json_roundtrip: bool = False) -> Any:
+        if isinstance(value, str):
+            parsed = _json_loads_maybe(value) if prefer_json_roundtrip else None
+            if parsed is not None:
+                sanitized = self._sanitize(parsed, path)
+                if sanitized != parsed:
+                    return json.dumps(sanitized, separators=(",", ":"))
+            return self._upload_string(value, path)
+
+        if isinstance(value, Mapping):
+            changed = False
+            next_value: dict[str, Any] = {}
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                sanitized = self._sanitize(child, child_path)
+                changed = changed or sanitized != child
+                next_value[str(key)] = sanitized
+            return next_value if changed else value
+
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            changed = False
+            next_items: list[Any] = []
+            for index, child in enumerate(value):
+                child_path = f"{path}[{index}]"
+                sanitized = self._sanitize(child, child_path)
+                changed = changed or sanitized != child
+                next_items.append(sanitized)
+            return next_items if changed else value
+
+        return value
+
+    def sanitize_span(self, span: ReadableSpan) -> ReadableSpan:
+        attrs = span.attributes
+        events = span.events
+        sanitized_attrs = (
+            {key: self.sanitize_attribute(key, value) for key, value in attrs.items()}
+            if attrs
+            else attrs
+        )
+        sanitized_events = []
+        events_changed = False
+        for event_index, event in enumerate(events):
+            event_attrs = event.attributes
+            if event_attrs:
+                next_attrs = {
+                    key: self._sanitize(
+                        value, f"events[{event_index}].{key}", prefer_json_roundtrip=True
+                    )
+                    for key, value in event_attrs.items()
+                }
+            else:
+                next_attrs = event_attrs
+            events_changed = events_changed or next_attrs != event_attrs
+            sanitized_events.append(
+                Event(event.name, attributes=next_attrs, timestamp=event.timestamp)
+            )
+
+        if sanitized_attrs == attrs and not events_changed:
+            return span
+
+        return ReadableSpan(
+            name=span.name,
+            context=span.context,
+            parent=span.parent,
+            resource=span.resource,
+            attributes=sanitized_attrs,
+            events=tuple(sanitized_events),
+            links=span.links,
+            kind=span.kind,
+            instrumentation_info=span.instrumentation_info,
+            status=span.status,
+            start_time=span.start_time,
+            end_time=span.end_time,
+            instrumentation_scope=span.instrumentation_scope,
+        )
+
+
+class _ArtifactRewritingExporter(SpanExporter):
+    """Uploads large inline media/file payloads and replaces them with refs."""
+
+    def __init__(self, inner: SpanExporter, *, endpoint: str, api_key: str) -> None:
+        self._inner = inner
+        self._sanitizer = _ArtifactSanitizer(_ArtifactUploader(endpoint=endpoint, api_key=api_key))
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        sanitized = [self._sanitizer.sanitize_span(span) for span in spans]
+        return self._inner.export(sanitized)
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._inner.force_flush(timeout_millis)
 
 
 class _OTLPSpanExporter413Aware(OTLPSpanExporter):
@@ -202,6 +592,65 @@ class _ComponentAttributeProcessor(SpanProcessor):
         return True
 
 
+def artifact(
+    value: str | bytes | Path,
+    *,
+    mime_type: str | None = None,
+    api_key: str | None = None,
+    endpoint: str | None = None,
+) -> ArtifactReference:
+    """Upload a local file or bytes and return a trace-safe artifact reference.
+
+    Local files are explicit on purpose: the SDK does not silently read paths
+    that happen to appear in span attributes.
+
+    Example::
+
+        ref = promptic_sdk.artifact("report.pdf")
+        span.set_attribute("retrieval.input_file", ref.ref)
+    """
+    resolved_api_key = api_key or _configured_api_key or os.environ.get("PROMPTIC_API_KEY")
+    if not resolved_api_key:
+        msg = "Promptic API key is required to upload artifacts."
+        raise ValueError(msg)
+
+    resolved_endpoint = (
+        endpoint or _configured_endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
+    )
+
+    if isinstance(value, Path) or (isinstance(value, str) and Path(value).exists()):
+        path = Path(value)
+        content = path.read_bytes()
+        resolved_mime_type = (
+            mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        )
+        source_path = str(path)
+    elif isinstance(value, bytes):
+        content = value
+        resolved_mime_type = mime_type or "application/octet-stream"
+        source_path = "$"
+    elif isinstance(value, str):
+        content = value.encode("utf-8")
+        resolved_mime_type = mime_type or "text/plain"
+        source_path = "$"
+    else:
+        msg = "artifact() expects a path, bytes, or text string."
+        raise TypeError(msg)
+
+    ref = _ArtifactUploader(endpoint=resolved_endpoint, api_key=resolved_api_key).upload(
+        content,
+        mime_type=resolved_mime_type,
+        source_path=source_path,
+        preview=_preview_text(content.decode("utf-8", errors="ignore"))
+        if resolved_mime_type.startswith("text/")
+        else None,
+    )
+    if ref is None:
+        msg = "Failed to upload artifact to Promptic."
+        raise RuntimeError(msg)
+    return ref
+
+
 def init(
     *,
     api_key: str | None = None,
@@ -219,6 +668,8 @@ def init(
             instrument them.
         service_name: OpenTelemetry ``service.name`` resource attribute.
     """
+    global _configured_api_key, _configured_endpoint
+
     api_key = api_key or os.environ.get("PROMPTIC_API_KEY")
     if not api_key:
         msg = (
@@ -228,6 +679,8 @@ def init(
         raise ValueError(msg)
 
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
+    _configured_api_key = api_key
+    _configured_endpoint = endpoint
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
     # Layered exporter:
@@ -242,9 +695,13 @@ def init(
     # makes overflow free.
     exporter = _LoggingExporter(
         _BisectingExporter(
-            _OTLPSpanExporter413Aware(
-                endpoint=traces_endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
+            _ArtifactRewritingExporter(
+                _OTLPSpanExporter413Aware(
+                    endpoint=traces_endpoint,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                ),
+                endpoint=endpoint,
+                api_key=api_key,
             )
         )
     )

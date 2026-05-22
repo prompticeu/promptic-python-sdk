@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -36,6 +38,8 @@ from promptic_sdk.models import (
     RunList,
     RunWithTraces,
     Trace,
+    TraceArtifact,
+    TraceArtifactList,
     TraceList,
     TracingStats,
     Workspace,
@@ -158,6 +162,17 @@ class PrompticClient:
     def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, params=params)
 
+    def _get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> bytes:
+        resp = self._client.request("GET", path, params=params)
+        if resp.status_code >= 400:
+            try:
+                body = resp.json()
+                message = body.get("error", resp.text)
+            except Exception:
+                message = resp.text
+            raise PrompticAPIError(resp.status_code, message)
+        return resp.content
+
     def _post(self, path: str, *, json: Any = None) -> Any:
         return self._request("POST", path, json=json)
 
@@ -202,6 +217,23 @@ class PrompticClient:
     def get_trace(self, trace_id: str) -> Trace:
         """Get a single trace with all its spans and events."""
         return self._get(f"/traces/{trace_id}")
+
+    def list_trace_artifacts(self, trace_id: str) -> TraceArtifactList:
+        """List artifacts referenced by a trace."""
+        return self._get(f"/traces/{trace_id}/artifacts")
+
+    def get_artifact(self, artifact_id: str) -> TraceArtifact:
+        """Get artifact metadata."""
+        return self._get(f"/artifacts/{artifact_id}")
+
+    def get_artifact_content(self, artifact_id: str) -> bytes:
+        """Fetch artifact bytes."""
+        return self._get_bytes(f"/artifacts/{artifact_id}/content")
+
+    def download_artifact(self, artifact_id: str, path: str | os.PathLike[str]) -> None:
+        """Download artifact bytes to a local path."""
+        with open(path, "wb") as f:
+            f.write(self.get_artifact_content(artifact_id))
 
     def get_stats(self, *, days_back: int = 30) -> TracingStats:
         """Get aggregated tracing stats."""
@@ -685,6 +717,17 @@ class AsyncPrompticClient:
     async def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         return await self._request("GET", path, params=params)
 
+    async def _get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> bytes:
+        resp = await self._client.request("GET", path, params=params)
+        if resp.status_code >= 400:
+            try:
+                body = resp.json()
+                message = body.get("error", resp.text)
+            except Exception:
+                message = resp.text
+            raise PrompticAPIError(resp.status_code, message)
+        return resp.content
+
     async def _post(self, path: str, *, json: Any = None) -> Any:
         return await self._request("POST", path, json=json)
 
@@ -718,6 +761,23 @@ class AsyncPrompticClient:
     async def get_trace(self, trace_id: str) -> Trace:
         """Get a single trace with all its spans and events."""
         return await self._get(f"/traces/{trace_id}")
+
+    async def list_trace_artifacts(self, trace_id: str) -> TraceArtifactList:
+        """List artifacts referenced by a trace."""
+        return await self._get(f"/traces/{trace_id}/artifacts")
+
+    async def get_artifact(self, artifact_id: str) -> TraceArtifact:
+        """Get artifact metadata."""
+        return await self._get(f"/artifacts/{artifact_id}")
+
+    async def get_artifact_content(self, artifact_id: str) -> bytes:
+        """Fetch artifact bytes."""
+        return await self._get_bytes(f"/artifacts/{artifact_id}/content")
+
+    async def download_artifact(self, artifact_id: str, path: str | os.PathLike[str]) -> None:
+        """Download artifact bytes to a local path."""
+        content = await self.get_artifact_content(artifact_id)
+        await asyncio.to_thread(Path(path).write_bytes, content)
 
     async def get_stats(self, *, days_back: int = 30) -> TracingStats:
         """Get aggregated tracing stats."""
