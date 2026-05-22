@@ -789,6 +789,29 @@ class TestArtifactHelper:
         assert ref.id == "artifact-id"
         assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
 
+    @pytest.mark.parametrize("value", ["Use model gpt-4.1 in prod", "gpt-4.1"])
+    def test_dotted_model_text_is_uploaded_as_text(self, monkeypatch, value):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(value)
+
+        assert ref.id == "artifact-id"
+        assert calls == [(value.encode("utf-8"), "text/plain", "$", value)]
+
     @pytest.mark.parametrize("value", ["Q: answer", "a:1"])
     def test_colon_prefixed_text_is_uploaded_as_text(self, monkeypatch, value):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")

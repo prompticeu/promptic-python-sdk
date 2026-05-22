@@ -82,6 +82,7 @@ _LARGE_TEXT_MIN_BYTES = 256 * 1024
 _MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 _TEXT_PREVIEW_CHARS = 4096
 _URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_FILENAME_LIKE_RE = re.compile(r"^[^\s/\\]+\.[A-Za-z][A-Za-z0-9]{0,5}$")
 _MEDIA_PATH_MARKERS = (
     "image",
     "img",
@@ -399,7 +400,7 @@ def _looks_like_path(value: str) -> bool:
         return True
     if "\\" in stripped or "/" in stripped:
         return True
-    return bool(Path(_source_path_name(stripped)).suffix)
+    return bool(_FILENAME_LIKE_RE.match(_source_path_name(stripped)))
 
 
 def _configure_artifacts_once(*, api_key: str, endpoint: str) -> None:
