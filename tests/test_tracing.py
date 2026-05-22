@@ -555,6 +555,50 @@ class TestArtifactUploader:
         assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
         assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
 
+    def test_upload_falls_back_to_local_size_for_malformed_response_fields(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=404)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": 123,
+                        "sizeBytes": "not-a-number",
+                        "sha256": None,
+                    }
+                )
+
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=FakeClient()):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert ref.mime_type == "text/plain"
+        assert ref.size_bytes == 5
+        assert ref.sha256 == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
 
 class TestArtifactHelper:
     def test_missing_path_like_string_raises(self, monkeypatch):
@@ -562,6 +606,12 @@ class TestArtifactHelper:
 
         with pytest.raises(FileNotFoundError, match="does not exist"):
             artifact("/tmp/definitely-missing-report.pdf")
+
+    def test_missing_extensionless_path_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("outputs/report")
 
     def test_plain_text_string_is_uploaded_as_text(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")

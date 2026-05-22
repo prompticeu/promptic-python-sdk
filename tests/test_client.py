@@ -95,6 +95,27 @@ class TestPrompticClient:
         assert target.read_bytes() == b"existing"
         client.close()
 
+    def test_download_artifact_does_not_truncate_existing_file_on_write_failure(
+        self, monkeypatch, tmp_path
+    ):
+        target = tmp_path / "artifact.bin"
+        target.write_bytes(b"existing")
+        client = PrompticClient(api_key="pk_test")
+        monkeypatch.setattr(client, "get_artifact_content", lambda _artifact_id: b"new")
+
+        def fail_fsync(_fd: int) -> None:
+            msg = "disk full"
+            raise OSError(msg)
+
+        monkeypatch.setattr("promptic_sdk.client.os.fsync", fail_fsync)
+
+        with pytest.raises(OSError, match="disk full"):
+            client.download_artifact("artifact-id", target)
+
+        assert target.read_bytes() == b"existing"
+        assert not list(tmp_path.glob(".artifact.bin.*"))
+        client.close()
+
     def test_get_stats(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {

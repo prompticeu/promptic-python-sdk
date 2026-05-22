@@ -296,18 +296,30 @@ class _ArtifactUploader:
             logger.warning("Promptic: failed to upload trace artifact.", exc_info=True)
             return None
 
+        if not isinstance(data, Mapping):
+            logger.warning("Promptic: artifact upload returned a non-object response.")
+            return None
+
         artifact_id = data.get("id")
         uri = data.get("uri") or (f"{_ARTIFACT_URI_SCHEME}{artifact_id}" if artifact_id else None)
         if not artifact_id or not uri:
             logger.warning("Promptic: artifact upload returned an invalid response.")
             return None
 
+        raw_size = data.get("sizeBytes")
+        try:
+            size_bytes = int(raw_size) if raw_size is not None else len(content)
+        except (TypeError, ValueError):
+            size_bytes = len(content)
+        raw_mime_type = data.get("mimeType")
+        raw_sha256 = data.get("sha256")
+
         return ArtifactReference(
             id=str(artifact_id),
             uri=str(uri),
-            mime_type=str(data.get("mimeType") or mime_type),
-            size_bytes=int(data.get("sizeBytes") or len(content)),
-            sha256=str(data.get("sha256") or sha256),
+            mime_type=raw_mime_type if isinstance(raw_mime_type, str) else mime_type,
+            size_bytes=size_bytes,
+            sha256=raw_sha256 if isinstance(raw_sha256, str) else sha256,
         )
 
 
@@ -380,7 +392,7 @@ def _looks_like_path(value: str) -> bool:
         return True
     if stripped.startswith(("/", "\\")):
         return True
-    return bool(("\\" in stripped or "/" in stripped) and Path(_source_path_name(stripped)).suffix)
+    return "\\" in stripped or "/" in stripped
 
 
 def _configure_artifacts_once(*, api_key: str, endpoint: str) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,22 @@ from promptic_sdk.models import (
 )
 
 _DEFAULT_ENDPOINT = "https://promptic.eu"
+
+
+def _atomic_write_bytes(path: str | os.PathLike[str], content: bytes) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(target)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
 
 class PrompticAPIError(Exception):
@@ -233,7 +250,7 @@ class PrompticClient:
     def download_artifact(self, artifact_id: str, path: str | os.PathLike[str]) -> None:
         """Download artifact bytes to a local path."""
         content = self.get_artifact_content(artifact_id)
-        Path(path).write_bytes(content)
+        _atomic_write_bytes(path, content)
 
     def get_stats(self, *, days_back: int = 30) -> TracingStats:
         """Get aggregated tracing stats."""
@@ -777,7 +794,7 @@ class AsyncPrompticClient:
     async def download_artifact(self, artifact_id: str, path: str | os.PathLike[str]) -> None:
         """Download artifact bytes to a local path."""
         content = await self.get_artifact_content(artifact_id)
-        await asyncio.to_thread(Path(path).write_bytes, content)
+        await asyncio.to_thread(_atomic_write_bytes, path, content)
 
     async def get_stats(self, *, days_back: int = 30) -> TracingStats:
         """Get aggregated tracing stats."""
