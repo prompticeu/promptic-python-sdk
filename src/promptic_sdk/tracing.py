@@ -276,14 +276,21 @@ class _ArtifactUploader:
 
         try:
             with httpx.Client(timeout=30) as client:
-                data = self._direct_upload(
-                    client,
-                    content,
-                    mime_type=mime_type,
-                    source_path=source_path,
-                    preview=preview,
-                    sha256=sha256,
-                )
+                try:
+                    data = self._direct_upload(
+                        client,
+                        content,
+                        mime_type=mime_type,
+                        source_path=source_path,
+                        preview=preview,
+                        sha256=sha256,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Promptic: direct artifact upload failed; falling back to server upload.",
+                        exc_info=True,
+                    )
+                    data = None
                 if data is None:
                     response = client.post(
                         f"{self._endpoint}/api/v1/artifacts",
