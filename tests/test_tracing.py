@@ -130,6 +130,36 @@ class TestInit:
         with tracer.start_as_current_span("smoke"):
             pass
 
+    def test_init_rewrites_artifacts_before_bisecting(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        otlp_exporter = MagicMock(spec=SpanExporter)
+        bisecting_exporter = MagicMock(spec=SpanExporter)
+        artifact_exporter = MagicMock(spec=SpanExporter)
+        logging_exporter = MagicMock(spec=SpanExporter)
+
+        with (
+            patch(
+                "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+                return_value=otlp_exporter,
+            ),
+            patch(
+                "promptic_sdk.tracing._BisectingExporter", return_value=bisecting_exporter
+            ) as mock_bisecting,
+            patch(
+                "promptic_sdk.tracing._ArtifactRewritingExporter",
+                return_value=artifact_exporter,
+            ) as mock_artifacts,
+            patch("promptic_sdk.tracing._LoggingExporter", return_value=logging_exporter),
+        ):
+            init(auto_instrument=False)
+
+        mock_bisecting.assert_called_once_with(otlp_exporter)
+        mock_artifacts.assert_called_once_with(
+            bisecting_exporter,
+            endpoint="https://promptic.eu",
+            api_key="pk_test",
+        )
+
     def test_repeated_init_does_not_replace_artifact_credentials(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_first")
         with patch(
@@ -154,6 +184,14 @@ class TestInit:
 
         assert tracing_module._configured_api_key == "pk_external"  # noqa: SLF001
         assert tracing_module._configured_endpoint == "https://external.example"  # noqa: SLF001
+
+    def test_init_auto_instruments_with_existing_provider(self):
+        trace.set_tracer_provider(TracerProvider())
+
+        with patch("promptic_sdk.tracing._auto_instrument") as mock_auto:
+            init(api_key="pk_external", auto_instrument=True)
+
+        mock_auto.assert_called_once()
 
 
 class TestBisectingExporter:

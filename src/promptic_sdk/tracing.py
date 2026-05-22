@@ -728,29 +728,32 @@ def init(
     if getattr(trace._TRACER_PROVIDER_SET_ONCE, "_done", False):  # noqa: SLF001
         logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
         _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
+        if auto_instrument:
+            _auto_instrument()
         return
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
     # Layered exporter:
     #   _LoggingExporter      → emits a one-time WARNING on the first failure
-    #   _BisectingExporter    → on HTTP 413, halves the batch and retries
+    #   _ArtifactRewritingExporter → uploads large inline payloads once per batch
+    #   _BisectingExporter    → on HTTP 413, halves sanitized spans and retries
     #   _OTLPSpanExporter413Aware → raises _BodyTooLargeError for 413 so the
     #                                bisecter sees it (instead of the parent
     #                                swallowing it as a generic FAILURE)
     #
-    # With this stack, oversized batches recover transparently. We keep
-    # OTel's default `max_export_batch_size` (512) because the bisecter
-    # makes overflow free.
+    # With this stack, oversized batches recover transparently without
+    # re-uploading artifacts on each bisected retry. We keep OTel's default
+    # `max_export_batch_size` (512) because the bisecter makes overflow free.
     exporter = _LoggingExporter(
-        _BisectingExporter(
-            _ArtifactRewritingExporter(
+        _ArtifactRewritingExporter(
+            _BisectingExporter(
                 _OTLPSpanExporter413Aware(
                     endpoint=traces_endpoint,
                     headers={"Authorization": f"Bearer {api_key}"},
                 ),
-                endpoint=endpoint,
-                api_key=api_key,
-            )
+            ),
+            endpoint=endpoint,
+            api_key=api_key,
         )
     )
 
