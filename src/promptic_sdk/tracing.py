@@ -12,6 +12,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
@@ -80,6 +81,7 @@ _GENERIC_BASE64_MIN_BYTES = 8 * 1024
 _LARGE_TEXT_MIN_BYTES = 256 * 1024
 _MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 _TEXT_PREVIEW_CHARS = 4096
+_URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _MEDIA_PATH_MARKERS = (
     "image",
     "img",
@@ -370,13 +372,24 @@ def _looks_like_path(value: str) -> bool:
         return False
     if stripped.lower().startswith(("http://", "https://", "data:")):
         return False
+    if len(stripped) >= 3 and stripped[1] == ":" and stripped[0].isalpha():
+        return True
+    if _URI_SCHEME_RE.match(stripped):
+        return False
     if stripped.startswith(("~/", "~\\", "./", ".\\", "../", "..\\")):
         return True
     if stripped.startswith(("/", "\\")):
         return True
-    if len(stripped) >= 3 and stripped[1] == ":" and stripped[0].isalpha():
-        return True
     return bool(("\\" in stripped or "/" in stripped) and Path(_source_path_name(stripped)).suffix)
+
+
+def _configure_artifacts_once(*, api_key: str, endpoint: str) -> None:
+    global _configured_api_key, _configured_endpoint
+
+    if _configured_api_key is None:
+        _configured_api_key = api_key
+    if _configured_endpoint is None:
+        _configured_endpoint = endpoint
 
 
 class _ArtifactUploadBackend(Protocol):
@@ -714,6 +727,7 @@ def init(
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
     if getattr(trace._TRACER_PROVIDER_SET_ONCE, "_done", False):  # noqa: SLF001
         logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
+        _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
         return
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
@@ -750,8 +764,7 @@ def init(
     provider.add_span_processor(_ComponentAttributeProcessor())
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-    _configured_api_key = api_key
-    _configured_endpoint = endpoint
+    _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
 
     # Ensure all spans are flushed when the process exits.
     atexit.register(provider.shutdown)

@@ -143,6 +143,18 @@ class TestInit:
         assert tracing_module._configured_api_key == "pk_first"  # noqa: SLF001
         assert tracing_module._configured_endpoint == "https://first.example"  # noqa: SLF001
 
+    def test_init_preserves_artifact_credentials_with_existing_provider(self):
+        trace.set_tracer_provider(TracerProvider())
+
+        init(
+            api_key="pk_external",
+            endpoint="https://external.example",
+            auto_instrument=False,
+        )
+
+        assert tracing_module._configured_api_key == "pk_external"  # noqa: SLF001
+        assert tracing_module._configured_endpoint == "https://external.example"  # noqa: SLF001
+
 
 class TestBisectingExporter:
     """The bisecting exporter halves and retries on 413."""
@@ -535,7 +547,15 @@ class TestArtifactHelper:
         assert ref.id == "artifact-id"
         assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
 
-    def test_url_like_string_is_uploaded_as_text(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "https://example.com/report.pdf",
+            "s3://bucket/report.pdf",
+            "file:///tmp/report.pdf",
+        ],
+    )
+    def test_uri_like_string_is_uploaded_as_text(self, monkeypatch, value):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
 
         calls = []
@@ -552,15 +572,15 @@ class TestArtifactHelper:
 
         monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
 
-        ref = artifact("https://example.com/report.pdf")
+        ref = artifact(value)
 
         assert ref.id == "artifact-id"
         assert calls == [
             (
-                b"https://example.com/report.pdf",
+                value.encode("utf-8"),
                 "text/plain",
                 "$",
-                "https://example.com/report.pdf",
+                value,
             )
         ]
 
