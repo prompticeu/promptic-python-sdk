@@ -661,6 +661,12 @@ class TestArtifactHelper:
         with pytest.raises(FileNotFoundError, match="does not exist"):
             artifact("outputs/report")
 
+    def test_missing_bare_filename_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("definitely-missing-report.pdf")
+
     def test_missing_windows_path_like_string_raises(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
 

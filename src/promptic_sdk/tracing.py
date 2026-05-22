@@ -397,7 +397,9 @@ def _looks_like_path(value: str) -> bool:
         return True
     if stripped.startswith(("/", "\\")):
         return True
-    return "\\" in stripped or "/" in stripped
+    if "\\" in stripped or "/" in stripped:
+        return True
+    return bool(Path(_source_path_name(stripped)).suffix)
 
 
 def _configure_artifacts_once(*, api_key: str, endpoint: str) -> None:
