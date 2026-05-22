@@ -1,5 +1,7 @@
 """Tests for the tracing module."""
 
+import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -377,6 +379,52 @@ class TestArtifactSanitizer:
                 b"hello hello hello",
                 "image/png",
                 "gen_ai.input.messages[0].content[0].image_url.url",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+    def test_rewrites_openai_blob_base64_with_sibling_mime_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"type": "text", "content": "Read this image."},
+                        {
+                            "type": "blob",
+                            "modality": "image",
+                            "mime_type": "image/png",
+                            "content": encoded,
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].parts[1].content",
             )
         ]
         assert encoded not in sanitized

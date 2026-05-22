@@ -425,19 +425,21 @@ class _ArtifactSanitizer:
     def _artifact_ref(self, ref: ArtifactReference) -> dict[str, Any]:
         return ref.to_dict()
 
-    def _upload_string(self, value: str, path: str) -> Any:
+    def _upload_string(self, value: str, path: str, *, mime_type_hint: str | None = None) -> Any:
         data_uri = _decode_data_uri(value)
         if data_uri:
             mime_type, content = data_uri
             ref = self._uploader.upload(content, mime_type=mime_type, source_path=path)
             return ref.uri if ref else value
 
-        if not value.startswith(("http://", "https://")) and _is_media_path(path):
+        if not value.startswith(("http://", "https://")) and (
+            _is_media_path(path) or mime_type_hint
+        ):
             content = _normalise_base64(value)
             if content is not None and len(content) >= _GENERIC_BASE64_MIN_BYTES:
                 ref = self._uploader.upload(
                     content,
-                    mime_type="application/octet-stream",
+                    mime_type=mime_type_hint or "application/octet-stream",
                     source_path=path,
                 )
                 return ref.uri if ref else value
@@ -453,21 +455,39 @@ class _ArtifactSanitizer:
 
         return value
 
-    def _sanitize(self, value: Any, path: str, *, prefer_json_roundtrip: bool = False) -> Any:
+    def _sanitize(
+        self,
+        value: Any,
+        path: str,
+        *,
+        prefer_json_roundtrip: bool = False,
+        mime_type_hint: str | None = None,
+    ) -> Any:
         if isinstance(value, str):
             parsed = _json_loads_maybe(value) if prefer_json_roundtrip else None
             if parsed is not None:
                 sanitized = self._sanitize(parsed, path)
                 if sanitized != parsed:
                     return json.dumps(sanitized, separators=(",", ":"))
-            return self._upload_string(value, path)
+            return self._upload_string(value, path, mime_type_hint=mime_type_hint)
 
         if isinstance(value, Mapping):
             changed = False
             next_value: dict[str, Any] = {}
+            record_type = value.get("type")
+            record_mime_type = value.get("mime_type") or value.get("media_type")
+            child_mime_type = record_mime_type if isinstance(record_mime_type, str) else None
             for key, child in value.items():
                 child_path = f"{path}.{key}" if path else str(key)
-                sanitized = self._sanitize(child, child_path)
+                sanitized = self._sanitize(
+                    child,
+                    child_path,
+                    mime_type_hint=(
+                        child_mime_type
+                        if record_type == "blob" and key in {"content", "data", "blob"}
+                        else None
+                    ),
+                )
                 changed = changed or sanitized != child
                 next_value[str(key)] = sanitized
             return next_value if changed else value
