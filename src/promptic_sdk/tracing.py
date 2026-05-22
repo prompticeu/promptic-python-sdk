@@ -384,7 +384,12 @@ def _looks_like_path(value: str) -> bool:
         return False
     if stripped.lower().startswith(("http://", "https://", "data:")):
         return False
-    if len(stripped) >= 3 and stripped[1] == ":" and stripped[0].isalpha():
+    if (
+        len(stripped) >= 3
+        and stripped[1] == ":"
+        and stripped[0].isalpha()
+        and stripped[2] in {"/", "\\"}
+    ):
         return True
     if _URI_SCHEME_RE.match(stripped):
         return False
