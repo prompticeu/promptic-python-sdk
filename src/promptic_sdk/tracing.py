@@ -194,21 +194,25 @@ class _ArtifactUploader:
         if "." not in filename:
             filename = f"{filename}{mimetypes.guess_extension(mime_type) or ''}"
 
-        presign_response = client.post(
-            f"{self._endpoint}/api/v1/storage-objects/presign",
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={
-                "folder": "trace-artifacts",
-                "filename": filename,
-                "contentType": mime_type,
-                "access": "private",
-                "sizeBytes": len(content),
-                "maxSizeBytes": _MAX_ARTIFACT_BYTES,
-            },
-        )
-        if presign_response.status_code == 404:
+        try:
+            presign_response = client.post(
+                f"{self._endpoint}/api/v1/storage-objects/presign",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "folder": "trace-artifacts",
+                    "filename": filename,
+                    "contentType": mime_type,
+                    "access": "private",
+                    "sizeBytes": len(content),
+                    "maxSizeBytes": _MAX_ARTIFACT_BYTES,
+                },
+            )
+            if presign_response.status_code == 404:
+                return None
+            presign_response.raise_for_status()
+        except Exception:
+            logger.debug("Promptic: storage presign failed; falling back to server upload.")
             return None
-        presign_response.raise_for_status()
         presigned = presign_response.json()
 
         upload_url = presigned.get("uploadUrl")

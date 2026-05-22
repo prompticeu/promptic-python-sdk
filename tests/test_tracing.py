@@ -697,6 +697,54 @@ class TestArtifactUploader:
         assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
         assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
 
+    def test_upload_falls_back_to_server_upload_when_presign_fails(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=503)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "text/plain",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
+        assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
+
     def test_upload_falls_back_to_local_size_for_malformed_response_fields(self):
         class FakeResponse:
             def __init__(self, status_code=200, data=None):
