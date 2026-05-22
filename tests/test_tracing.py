@@ -430,6 +430,100 @@ class TestArtifactSanitizer:
         assert encoded not in sanitized
         assert "promptic-artifact://artifact-id" in sanitized
 
+    def test_rewrites_anthropic_source_data_with_sibling_media_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Read this image."},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": encoded,
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].content[1].source.data",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+    def test_rewrites_gemini_inline_data_with_sibling_mime_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Read this image."},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": encoded,
+                            }
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].parts[1].inline_data.data",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
 
 class TestArtifactUploader:
     def test_upload_prefers_direct_storage_upload(self):

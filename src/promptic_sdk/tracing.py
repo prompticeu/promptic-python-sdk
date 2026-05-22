@@ -481,7 +481,6 @@ class _ArtifactSanitizer:
         if isinstance(value, Mapping):
             changed = False
             next_value: dict[str, Any] = {}
-            record_type = value.get("type")
             record_mime_type = value.get("mime_type") or value.get("media_type")
             child_mime_type = record_mime_type if isinstance(record_mime_type, str) else None
             for key, child in value.items():
@@ -491,7 +490,7 @@ class _ArtifactSanitizer:
                     child_path,
                     mime_type_hint=(
                         child_mime_type
-                        if record_type == "blob" and key in {"content", "data", "blob"}
+                        if child_mime_type and key in {"content", "data", "blob"}
                         else None
                     ),
                 )
