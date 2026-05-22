@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 
@@ -18,6 +19,7 @@ from promptic_sdk.tracing import (
     _BodyTooLargeError,
     _ComponentAttributeProcessor,
     _current_component,
+    _OTLPSpanExporter413Aware,
     ai_component,
     init,
 )
@@ -212,6 +214,48 @@ class TestBisectingExporter:
             bisecter.export([MagicMock()])
 
 
+class TestOTLPSpanExporter413Aware:
+    def test_export_supports_parent_export_without_timeout_parameter(self, monkeypatch):
+        calls: list[tuple[bytes, object]] = []
+
+        def parent_export(self, serialized_data: bytes):
+            calls.append((serialized_data, None))
+            return SimpleNamespace(status_code=200)
+
+        monkeypatch.setattr(OTLPSpanExporter, "_export", parent_export)
+
+        exporter = _OTLPSpanExporter413Aware(endpoint="http://example.com/v1/traces")
+        response = exporter._export(b"payload", timeout_sec=1.0)
+
+        assert response.status_code == 200
+        assert calls == [(b"payload", None)]
+
+    def test_export_supports_parent_export_with_timeout_parameter(self, monkeypatch):
+        calls: list[tuple[bytes, object]] = []
+
+        def parent_export(self, serialized_data: bytes, timeout_sec: float | None = None):
+            calls.append((serialized_data, timeout_sec))
+            return SimpleNamespace(status_code=200)
+
+        monkeypatch.setattr(OTLPSpanExporter, "_export", parent_export)
+
+        exporter = _OTLPSpanExporter413Aware(endpoint="http://example.com/v1/traces")
+        response = exporter._export(b"payload", timeout_sec=1.0)
+
+        assert response.status_code == 200
+        assert calls == [(b"payload", 1.0)]
+
+    def test_export_raises_typed_error_on_413(self, monkeypatch):
+        def parent_export(self, serialized_data: bytes):
+            return SimpleNamespace(status_code=413)
+
+        monkeypatch.setattr(OTLPSpanExporter, "_export", parent_export)
+
+        exporter = _OTLPSpanExporter413Aware(endpoint="http://example.com/v1/traces")
+        with pytest.raises(_BodyTooLargeError, match="HTTP 413"):
+            exporter._export(b"payload")
+
+
 class TestAutoInstrument:
     def test_openai_instrumentor_disables_default_image_uploader(self, monkeypatch):
         calls: list[object] = []
@@ -235,6 +279,7 @@ class TestAutoInstrument:
             _auto_instrument()
 
         assert calls == [{"upload_base64_image": None}, "instrumented"]
+
 
 class TestArtifactSanitizer:
     def test_rewrites_json_data_uri_into_artifact_reference(self):
@@ -386,6 +431,8 @@ class TestArtifactUploader:
         assert ref is not None
         assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
         assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
+
+
 class TestAiComponent:
     """Tests for the ai_component() context manager and _ComponentAttributeProcessor."""
 

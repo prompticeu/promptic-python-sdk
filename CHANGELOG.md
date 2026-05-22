@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.4 (2026-05-20)
+
+## Bug Fixes
+
+- Improved tracing support to handle the current OTLP exporter signature, ensuring better compatibility and reliability when exporting traces.
+
 ## v0.14.3 (2026-05-20)
 
 ## Bug Fixes

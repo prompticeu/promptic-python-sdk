@@ -50,7 +50,7 @@ from promptic_sdk.models import (
 )
 from promptic_sdk.tracing import ArtifactReference, ai_component, artifact, dataset, init
 
-__version__ = "0.14.3"
+__version__ = "0.14.4"
 __all__ = [
     "AsyncPrompticClient",
     "PrompticClient",
