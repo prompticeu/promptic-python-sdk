@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.15.0 (2026-05-23)
+
+Features
+
+- Added support for uploading trace artifacts directly, making tracing easier and more efficient.
+
 ## v0.14.4 (2026-05-20)
 
 ## Bug Fixes
