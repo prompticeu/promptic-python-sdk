@@ -141,6 +141,44 @@ def get_trace(
         console.print(span_table)
 
 
+@traces_app.command("artifacts")
+def list_trace_artifacts(
+    trace_id: str = typer.Argument(help="OTel trace ID to look up."),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """List artifacts referenced by a trace."""
+    with get_client() as client:
+        result = client.list_trace_artifacts(trace_id)
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    artifacts = result["data"]
+    if not artifacts:
+        console.print("No artifacts found.", style="dim")
+        return
+
+    table = Table(title=f"Artifacts ({len(artifacts)})")
+    table.add_column("Artifact ID", style="cyan", no_wrap=True)
+    table.add_column("MIME")
+    table.add_column("Bytes", justify="right")
+    table.add_column("Span")
+    table.add_column("Path")
+
+    for artifact in artifacts:
+        table.add_row(
+            artifact["id"],
+            artifact["mimeType"],
+            str(artifact["sizeBytes"]),
+            artifact.get("spanId") or "-",
+            artifact["sourcePath"],
+        )
+
+    console.print(table)
+
+
 @traces_app.command("stats")
 def stats(
     days_back: int = typer.Option(30, help="Number of days to look back."),

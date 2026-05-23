@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 
 from promptic_sdk.cli.commands.annotations import annotations_app
+from promptic_sdk.cli.commands.artifacts import artifacts_app
 from promptic_sdk.cli.commands.components import components_app
 from promptic_sdk.cli.commands.configure import configure
 from promptic_sdk.cli.commands.datasets import datasets_app
@@ -32,6 +33,7 @@ app.command("login")(login)
 app.command("logout")(logout)
 app.command("configure")(configure)
 app.add_typer(traces_app, name="traces")
+app.add_typer(artifacts_app, name="artifacts")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(components_app, name="components")
 app.add_typer(experiments_app, name="experiments")

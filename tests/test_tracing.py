@@ -1,5 +1,7 @@
 """Tests for the tracing module."""
 
+import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -9,8 +11,12 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 
+import promptic_sdk.tracing as tracing_module
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
+    ArtifactReference,
+    _ArtifactSanitizer,
+    _ArtifactUploader,
     _auto_instrument,
     _BisectingExporter,
     _BodyTooLargeError,
@@ -18,6 +24,7 @@ from promptic_sdk.tracing import (
     _current_component,
     _OTLPSpanExporter413Aware,
     ai_component,
+    artifact,
     init,
 )
 
@@ -33,6 +40,8 @@ class TestInit:
     def teardown_method(self):
         """Reset global tracer provider after each test."""
         _reset_tracer_provider()
+        tracing_module._configured_api_key = None  # noqa: SLF001
+        tracing_module._configured_endpoint = None  # noqa: SLF001
 
     def test_init_requires_api_key(self):
         with pytest.raises(ValueError, match="API key is required"):
@@ -122,6 +131,69 @@ class TestInit:
         tracer = provider.get_tracer("promptic_sdk.test")
         with tracer.start_as_current_span("smoke"):
             pass
+
+    def test_init_rewrites_artifacts_before_bisecting(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        otlp_exporter = MagicMock(spec=SpanExporter)
+        bisecting_exporter = MagicMock(spec=SpanExporter)
+        artifact_exporter = MagicMock(spec=SpanExporter)
+        logging_exporter = MagicMock(spec=SpanExporter)
+
+        with (
+            patch(
+                "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+                return_value=otlp_exporter,
+            ),
+            patch(
+                "promptic_sdk.tracing._BisectingExporter", return_value=bisecting_exporter
+            ) as mock_bisecting,
+            patch(
+                "promptic_sdk.tracing._ArtifactRewritingExporter",
+                return_value=artifact_exporter,
+            ) as mock_artifacts,
+            patch("promptic_sdk.tracing._LoggingExporter", return_value=logging_exporter),
+        ):
+            init(auto_instrument=False)
+
+        mock_bisecting.assert_called_once_with(otlp_exporter)
+        mock_artifacts.assert_called_once_with(
+            bisecting_exporter,
+            endpoint="https://promptic.eu",
+            api_key="pk_test",
+        )
+
+    def test_repeated_init_does_not_replace_artifact_credentials(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_first")
+        with patch(
+            "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+            return_value=MagicMock(),
+        ):
+            init(endpoint="https://first.example", auto_instrument=False)
+
+        init(api_key="pk_second", endpoint="https://second.example", auto_instrument=False)
+
+        assert tracing_module._configured_api_key == "pk_first"  # noqa: SLF001
+        assert tracing_module._configured_endpoint == "https://first.example"  # noqa: SLF001
+
+    def test_init_preserves_artifact_credentials_with_existing_provider(self):
+        trace.set_tracer_provider(TracerProvider())
+
+        init(
+            api_key="pk_external",
+            endpoint="https://external.example",
+            auto_instrument=False,
+        )
+
+        assert tracing_module._configured_api_key == "pk_external"  # noqa: SLF001
+        assert tracing_module._configured_endpoint == "https://external.example"  # noqa: SLF001
+
+    def test_init_auto_instruments_with_existing_provider(self):
+        trace.set_tracer_provider(TracerProvider())
+
+        with patch("promptic_sdk.tracing._auto_instrument") as mock_auto:
+            init(api_key="pk_external", auto_instrument=True)
+
+        mock_auto.assert_called_once()
 
 
 class TestBisectingExporter:
@@ -276,6 +348,635 @@ class TestAutoInstrument:
             _auto_instrument()
 
         assert calls == [{"upload_base64_image": None}, "instrumented"]
+
+
+class TestArtifactSanitizer:
+    def test_rewrites_json_data_uri_into_artifact_reference(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        encoded = "aGVsbG8gaGVsbG8gaGVsbG8="
+        value = (
+            '[{"role":"user","content":[{"type":"image_url","image_url":'
+            f'{{"url":"data:image/png;base64,{encoded}"}}}}]}}]'
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                b"hello hello hello",
+                "image/png",
+                "gen_ai.input.messages[0].content[0].image_url.url",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+    def test_rewrites_openai_blob_base64_with_sibling_mime_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"type": "text", "content": "Read this image."},
+                        {
+                            "type": "blob",
+                            "modality": "image",
+                            "mime_type": "image/png",
+                            "content": encoded,
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].parts[1].content",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+    def test_rewrites_anthropic_source_data_with_sibling_media_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Read this image."},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": encoded,
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].content[1].source.data",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+    def test_rewrites_gemini_inline_data_with_sibling_mime_type(self):
+        uploads: list[tuple[bytes, str, str]] = []
+
+        class FakeUploader:
+            def upload(self, content, *, mime_type, source_path="$", preview=None):
+                uploads.append((content, mime_type, source_path))
+                return ArtifactReference(
+                    id="artifact-id",
+                    uri="promptic-artifact://artifact-id",
+                    mime_type=mime_type,
+                    size_bytes=len(content),
+                    sha256="abc123",
+                )
+
+        sanitizer = _ArtifactSanitizer(FakeUploader())
+        content = b"\x89PNG\r\n\x1a\n" + (b"\0" * 9000)
+        encoded = base64.b64encode(content).decode("ascii")
+        value = json.dumps(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Read this image."},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": encoded,
+                            }
+                        },
+                    ],
+                }
+            ]
+        )
+
+        sanitized = sanitizer.sanitize_attribute("gen_ai.input.messages", value)
+
+        assert uploads == [
+            (
+                content,
+                "image/png",
+                "gen_ai.input.messages[0].parts[1].inline_data.data",
+            )
+        ]
+        assert encoded not in sanitized
+        assert "promptic-artifact://artifact-id" in sanitized
+
+
+class TestArtifactUploader:
+    def test_upload_prefers_direct_storage_upload(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                            "headers": {"x-ms-blob-type": "BlockBlob"},
+                        }
+                    )
+                if url.endswith("/api/v1/artifacts"):
+                    return FakeResponse(
+                        data={
+                            "id": "artifact-id",
+                            "uri": "promptic-artifact://artifact-id",
+                            "mimeType": "image/png",
+                            "sizeBytes": 5,
+                            "sha256": "hash",
+                        }
+                    )
+                raise AssertionError(url)
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                return FakeResponse()
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="image/png",
+                source_path="messages[0].image_url.url",
+            )
+
+        assert ref is not None
+        assert ref.id == "artifact-id"
+        assert [call[0] for call in fake_client.calls] == ["POST", "PUT", "POST"]
+        assert fake_client.calls[0][2]["json"]["folder"] == "trace-artifacts"
+        assert fake_client.calls[1][1] == "https://storage.example/upload"
+        assert fake_client.calls[1][2]["content"] == b"hello"
+        assert fake_client.calls[2][2]["json"]["storageObjectId"] == "storage-object-id"
+        assert "contentBase64" not in fake_client.calls[2][2]["json"]
+
+    def test_direct_upload_uses_windows_basename_for_source_path(self):
+        class FakeResponse:
+            def __init__(self, data=None):
+                self.status_code = 200
+                self._data = data or {}
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                        }
+                    )
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "application/pdf",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                return FakeResponse()
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="application/pdf",
+                source_path=r"C:\tmp\report.pdf",
+            )
+
+        assert fake_client.calls[0][2]["json"]["filename"] == "report.pdf"
+
+    def test_upload_falls_back_to_server_upload_when_presign_is_missing(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=404)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "text/plain",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
+        assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
+
+    def test_upload_falls_back_to_server_upload_when_presign_fails(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=503)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "text/plain",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
+        assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
+
+    def test_upload_falls_back_to_server_upload_when_direct_upload_fails(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                        }
+                    )
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "text/plain",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                    }
+                )
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                raise RuntimeError("storage unavailable")
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert [call[0] for call in fake_client.calls] == ["POST", "PUT", "POST"]
+        assert fake_client.calls[2][2]["json"]["contentBase64"] == "aGVsbG8="
+
+    def test_upload_falls_back_to_local_size_for_malformed_response_fields(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=404)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": 123,
+                        "sizeBytes": "not-a-number",
+                        "sha256": None,
+                    }
+                )
+
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=FakeClient()):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="text/plain",
+            )
+
+        assert ref is not None
+        assert ref.mime_type == "text/plain"
+        assert ref.size_bytes == 5
+        assert ref.sha256 == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+
+class TestArtifactHelper:
+    def test_missing_path_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("/tmp/definitely-missing-report.pdf")
+
+    def test_missing_extensionless_path_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("outputs/report")
+
+    def test_missing_bare_filename_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact("definitely-missing-report.pdf")
+
+    def test_missing_windows_path_like_string_raises(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            artifact(r"C:\tmp\definitely-missing-report.pdf")
+
+    def test_plain_text_string_is_uploaded_as_text(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact("plain text content")
+
+        assert ref.id == "artifact-id"
+        assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
+
+    @pytest.mark.parametrize("value", ["Use model gpt-4.1 in prod", "gpt-4.1"])
+    def test_dotted_model_text_is_uploaded_as_text(self, monkeypatch, value):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(value)
+
+        assert ref.id == "artifact-id"
+        assert calls == [(value.encode("utf-8"), "text/plain", "$", value)]
+
+    @pytest.mark.parametrize("value", ["Q: answer", "a:1"])
+    def test_colon_prefixed_text_is_uploaded_as_text(self, monkeypatch, value):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(value)
+
+        assert ref.id == "artifact-id"
+        assert calls == [(value.encode("utf-8"), "text/plain", "$", value)]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "https://example.com/report.pdf",
+            "s3://bucket/report.pdf",
+            "file:///tmp/report.pdf",
+        ],
+    )
+    def test_uri_like_string_is_uploaded_as_text(self, monkeypatch, value):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+
+        calls = []
+
+        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+            calls.append((content, mime_type, source_path, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(value)
+
+        assert ref.id == "artifact-id"
+        assert calls == [
+            (
+                value.encode("utf-8"),
+                "text/plain",
+                "$",
+                value,
+            )
+        ]
 
 
 class TestAiComponent:

@@ -183,7 +183,19 @@ Span attribute conventions:
 - `traceloop.span.kind="task"` — an internal pipeline stage
 - `traceloop.entity.input` / `traceloop.entity.output` — JSON-serialized stage payloads, surfaced in the Promptic UI
 
-For large payloads, log a small preview plus a count rather than the full object — traces are not designed to store data:
+Promptic automatically offloads inline base64 media and large file-like content
+into trace artifacts, then keeps lightweight `promptic-artifact://...`
+references in span attributes. Local filesystem paths are not read
+automatically; attach local files explicitly when you want the bytes available
+from the trace:
+
+```python
+file_ref = promptic_sdk.artifact("/tmp/report.pdf")
+span.set_attribute("retrieval.input_file", file_ref.ref)
+```
+
+For huge collections, still log a small preview plus a count rather than the
+full object:
 
 ```python
 span.set_attribute(
@@ -221,7 +233,7 @@ Both clients provide typed methods for the full Promptic REST API:
 | Resource       | Methods                                                                 |
 | -------------- | ----------------------------------------------------------------------- |
 | Workspace      | `get_workspace`                                                         |
-| Traces         | `list_traces`, `get_trace`, `get_stats`                                 |
+| Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
 | Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment` |
 | Observations   | `list_observations`, `create_observations`, `update_observation`, `delete_observation` |
@@ -251,6 +263,8 @@ promptic [command] [subcommand] [options]
 | `promptic workspace info`              | Show workspace info                    |
 | `promptic traces list`                 | List recent traces                     |
 | `promptic traces get <id>`             | Get a trace with spans                 |
+| `promptic traces artifacts <id>`       | List artifacts for a trace             |
+| `promptic artifacts get <id> -o file`  | Download an artifact                   |
 | `promptic traces stats`               | Show aggregated tracing stats          |
 | `promptic components list`             | List AI components                     |
 | `promptic components create`           | Create a component                     |

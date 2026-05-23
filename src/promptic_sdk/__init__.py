@@ -41,12 +41,14 @@ from promptic_sdk.models import (
     SpanEvent,
     TaskType,
     Trace,
+    TraceArtifact,
+    TraceArtifactList,
     TraceList,
     TraceListItem,
     TracingStats,
     Workspace,
 )
-from promptic_sdk.tracing import ai_component, dataset, init
+from promptic_sdk.tracing import ArtifactReference, ai_component, artifact, dataset, init
 
 __version__ = "0.14.4"
 __all__ = [
@@ -54,8 +56,10 @@ __all__ = [
     "PrompticClient",
     "PrompticAPIError",
     "ai_component",
+    "artifact",
     "dataset",
     "init",
+    "ArtifactReference",
     # Models
     "AgentEvaluation",
     "AgentEvaluationList",
@@ -96,6 +100,8 @@ __all__ = [
     "SpanEvent",
     "TaskType",
     "Trace",
+    "TraceArtifact",
+    "TraceArtifactList",
     "TraceList",
     "TraceListItem",
     "TracingStats",

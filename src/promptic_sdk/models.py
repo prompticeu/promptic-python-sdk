@@ -345,6 +345,34 @@ class TracingStats(TypedDict):
     errorRate: float
 
 
+class TraceArtifact(TypedDict):
+    """Artifact referenced from a trace or uploaded explicitly."""
+
+    id: str
+    workspaceId: str
+    traceDbId: str | None
+    spanDbId: str | None
+    traceId: str | None
+    spanId: str | None
+    sourcePath: str
+    sourceField: str
+    source: str
+    mimeType: str
+    sizeBytes: int
+    sha256: str
+    storageProvider: str
+    storageKey: str | None
+    preview: str | None
+    createdAt: str
+    uri: str
+
+
+class TraceArtifactList(TypedDict):
+    """List response for trace artifacts."""
+
+    data: list[TraceArtifact]
+
+
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
