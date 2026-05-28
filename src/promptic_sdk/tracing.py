@@ -275,6 +275,7 @@ class _ArtifactUploader:
         *,
         mime_type: str,
         source_path: str,
+        source_field: str | None,
         preview: str | None,
         sha256: str,
     ) -> dict[str, Any] | None:
@@ -337,7 +338,7 @@ class _ArtifactUploader:
                 "sizeBytes": len(content),
                 "sha256": sha256,
                 "sourcePath": source_path,
-                "sourceField": _artifact_source_field(source_path),
+                "sourceField": source_field or _artifact_source_field(source_path),
                 "source": "direct_upload",
                 "preview": preview,
             },
@@ -351,6 +352,7 @@ class _ArtifactUploader:
         *,
         mime_type: str,
         source_path: str = "$",
+        source_field: str | None = None,
         preview: str | None = None,
     ) -> ArtifactReference | None:
         if len(content) > _MAX_ARTIFACT_BYTES:
@@ -371,6 +373,7 @@ class _ArtifactUploader:
                         content,
                         mime_type=mime_type,
                         source_path=source_path,
+                        source_field=source_field,
                         preview=preview,
                         sha256=sha256,
                     )
@@ -388,7 +391,7 @@ class _ArtifactUploader:
                             "contentBase64": base64.b64encode(content).decode("ascii"),
                             "mimeType": mime_type,
                             "sourcePath": source_path,
-                            "sourceField": _artifact_source_field(source_path),
+                            "sourceField": source_field or _artifact_source_field(source_path),
                             "preview": preview,
                         },
                     )
@@ -831,6 +834,7 @@ def artifact(
         content,
         mime_type=resolved_mime_type,
         source_path=source_path,
+        source_field="manual",
         preview=_preview_text(content.decode("utf-8", errors="ignore"))
         if resolved_mime_type.startswith("text/")
         else None,

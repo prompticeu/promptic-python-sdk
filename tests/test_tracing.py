@@ -1177,6 +1177,31 @@ class TestArtifactUploader:
 
 
 class TestArtifactHelper:
+    def test_existing_file_upload_preserves_manual_source_field(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        path = tmp_path / "report.txt"
+        path.write_text("report body")
+        calls = []
+
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
+            calls.append((content, mime_type, source_path, source_field, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(path)
+
+        assert ref.id == "artifact-id"
+        assert calls == [(b"report body", "text/plain", str(path), "manual", "report body")]
+
     def test_missing_path_like_string_raises(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
 
@@ -1206,7 +1231,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -1229,7 +1256,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -1252,7 +1281,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -1282,7 +1313,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
