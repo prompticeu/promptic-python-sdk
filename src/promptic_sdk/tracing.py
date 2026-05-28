@@ -133,7 +133,7 @@ def _split_instrumentor_env(value: str | None) -> list[str] | None:
     if value is None:
         return None
     names = [item.strip() for item in re.split(r"[,;\s]+", value) if item.strip()]
-    return names
+    return names or None
 
 
 def _normalize_instrumentor_name(name: str) -> str:

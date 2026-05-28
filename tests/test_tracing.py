@@ -374,6 +374,9 @@ class TestAutoInstrument:
         calls: list[str] = []
 
         class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
             def instrument(self):
                 calls.append("openai")
 
@@ -445,6 +448,47 @@ class TestAutoInstrument:
             _auto_instrument()
 
         assert calls == ["langchain"]
+
+    def test_auto_instrument_treats_empty_env_selection_as_unset(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
+            def instrument(self):
+                calls.append("openai")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                calls.append("langchain")
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setenv("PROMPTIC_INSTRUMENTORS", "  ")
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            _auto_instrument()
+
+        assert calls == ["openai", "langchain"]
 
     def test_auto_instrument_rejects_unknown_names(self):
         with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
