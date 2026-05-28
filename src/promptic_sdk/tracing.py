@@ -137,8 +137,9 @@ def _split_instrumentor_env(value: str | None) -> list[str] | None:
 
 
 def _normalize_instrumentor_name(name: str) -> str:
-    normalized = name.strip().lower().replace("-", "_")
-    return _INSTRUMENTOR_ALIASES.get(normalized, normalized)
+    raw = name.strip().lower()
+    normalized = raw.replace("-", "_")
+    return _INSTRUMENTOR_ALIASES.get(raw, _INSTRUMENTOR_ALIASES.get(normalized, normalized))
 
 
 def _resolve_instrumentor_names(

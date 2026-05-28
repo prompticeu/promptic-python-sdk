@@ -531,6 +531,34 @@ class TestAutoInstrument:
         with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
             _auto_instrument(instrumentors=["does-not-exist"])
 
+    def test_auto_instrument_honors_dashed_claude_agent_alias(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeClaudeAgentSdkInstrumentor:
+            def instrument(self):
+                calls.append("claude_agent_sdk")
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                (
+                    "claude_agent_sdk",
+                    "opentelemetry.instrumentation.claude_agent_sdk",
+                    "ClaudeAgentSdkInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"claude_agent_sdk"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch(
+            "importlib.import_module",
+            return_value=SimpleNamespace(ClaudeAgentSdkInstrumentor=FakeClaudeAgentSdkInstrumentor),
+        ):
+            _auto_instrument(instrumentors=["claude-agent"])
+
+        assert calls == ["claude_agent_sdk"]
+
     def test_auto_instrument_warns_on_langsmith_otel_and_langchain(self, monkeypatch, caplog):
         monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
 
