@@ -125,6 +125,17 @@ class TestInit:
             exclude_instrumentors=["openai"],
         )
 
+    def test_init_validates_instrumentors_before_setting_provider(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with (
+            patch("promptic_sdk.tracing._OTLPSpanExporter413Aware") as mock_exporter,
+            pytest.raises(ValueError, match="Unknown Promptic instrumentor"),
+        ):
+            init(auto_instrument=True, instrumentors=["does-not-exist"])
+
+        mock_exporter.assert_not_called()
+        assert not trace._TRACER_PROVIDER_SET_ONCE._done  # noqa: SLF001
+
     def test_init_endpoint_from_env(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         monkeypatch.setenv("PROMPTIC_ENDPOINT", "https://env.example.com")

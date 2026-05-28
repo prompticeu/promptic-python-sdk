@@ -874,6 +874,12 @@ def init(
         raise ValueError(msg)
 
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
+    if auto_instrument:
+        _selected_instrumentors(
+            instrumentors,
+            exclude_instrumentors=exclude_instrumentors,
+        )
+
     if getattr(trace._TRACER_PROVIDER_SET_ONCE, "_done", False):  # noqa: SLF001
         logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
         _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
