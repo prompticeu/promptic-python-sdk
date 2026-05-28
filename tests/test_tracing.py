@@ -449,16 +449,41 @@ class TestAutoInstrument:
 
     def test_auto_instrument_warns_on_langsmith_otel_and_langchain(self, monkeypatch, caplog):
         monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                pass
+
         monkeypatch.setattr(
             "promptic_sdk.tracing._INSTRUMENTORS",
-            [("langchain", "missing.langchain", "LangchainInstrumentor")],
+            [("langchain", "opentelemetry.instrumentation.langchain", "LangchainInstrumentor")],
         )
         monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"langchain"})
 
-        with caplog.at_level("WARNING", logger="promptic_sdk"):
+        with (
+            patch(
+                "importlib.import_module",
+                return_value=SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor),
+            ),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
             _auto_instrument(instrumentors=["langchain"])
 
         assert "LANGSMITH_OTEL_ENABLED=true" in caplog.text
+
+    def test_auto_instrument_does_not_warn_for_missing_conflicting_instrumentors(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+
+        with (
+            patch("importlib.import_module", side_effect=ImportError("missing dependency")),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["openai", "langchain", "openai_agents"])
+
+        assert "duplicate" not in caplog.text
+        assert "OPENAI_AGENTS_DISABLE_TRACING" not in caplog.text
 
     def test_auto_instrument_skips_optional_import_errors_at_debug(self, caplog):
         with (

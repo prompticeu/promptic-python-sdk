@@ -1097,14 +1097,14 @@ def _auto_instrument(
         instrumentors,
         exclude_instrumentors=exclude_instrumentors,
     )
-    selected_names = {name for name, _, _ in selected}
-    _warn_on_instrumentor_conflicts(selected_names)
+    loaded_names: set[str] = set()
 
     for name, module_path, class_name in selected:
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
             instrumentor_cls(**_instrumentor_init_kwargs(module_path)).instrument()
+            loaded_names.add(name)
             logger.debug("Promptic: enabled %s.%s", module_path, class_name)
         except ImportError as exc:
             logger.debug(
@@ -1120,3 +1120,5 @@ def _auto_instrument(
                 class_name,
                 exc_info=True,
             )
+
+    _warn_on_instrumentor_conflicts(loaded_names)
