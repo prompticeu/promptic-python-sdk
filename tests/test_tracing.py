@@ -3,6 +3,7 @@
 import base64
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ import promptic_sdk.tracing as tracing_module
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
     ArtifactReference,
+    InstrumentorName,
     _ArtifactSanitizer,
     _ArtifactUploader,
     _auto_instrument,
@@ -105,6 +107,60 @@ class TestInit:
 
         mock_auto.assert_called_once()
 
+    def test_init_passes_instrumentor_selection_to_auto_instrument(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with (
+            patch(
+                "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+                return_value=MagicMock(),
+            ),
+            patch("promptic_sdk.tracing._auto_instrument") as mock_auto,
+        ):
+            init(
+                auto_instrument=True,
+                instrumentors=["langchain"],
+                exclude_instrumentors=["openai"],
+            )
+
+        selected = [item for item in tracing_module._INSTRUMENTORS if item[0] == "langchain"]
+        mock_auto.assert_called_once_with(
+            instrumentors=["langchain"],
+            exclude_instrumentors=["openai"],
+            selected=selected,
+        )
+
+    def test_init_validates_instrumentors_before_setting_provider(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with (
+            patch("promptic_sdk.tracing._OTLPSpanExporter413Aware") as mock_exporter,
+            pytest.raises(ValueError, match="Unknown Promptic instrumentor"),
+        ):
+            init(auto_instrument=True, instrumentors=cast(Any, ["does-not-exist"]))
+
+        mock_exporter.assert_not_called()
+        assert not trace._TRACER_PROVIDER_SET_ONCE._done  # noqa: SLF001
+
+    def test_init_reuses_generator_selection_after_validation(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        names: list[InstrumentorName] = ["langchain"]
+        instrumentors = (name for name in names)
+
+        with (
+            patch(
+                "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+                return_value=MagicMock(),
+            ),
+            patch("promptic_sdk.tracing._auto_instrument") as mock_auto,
+        ):
+            init(auto_instrument=True, instrumentors=instrumentors)
+
+        selected = [item for item in tracing_module._INSTRUMENTORS if item[0] == "langchain"]
+        mock_auto.assert_called_once_with(
+            instrumentors=instrumentors,
+            exclude_instrumentors=None,
+            selected=selected,
+        )
+
     def test_init_endpoint_from_env(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         monkeypatch.setenv("PROMPTIC_ENDPOINT", "https://env.example.com")
@@ -193,7 +249,11 @@ class TestInit:
         with patch("promptic_sdk.tracing._auto_instrument") as mock_auto:
             init(api_key="pk_external", auto_instrument=True)
 
-        mock_auto.assert_called_once()
+        mock_auto.assert_called_once_with(
+            instrumentors=None,
+            exclude_instrumentors=None,
+            selected=tracing_module._INSTRUMENTORS,
+        )
 
 
 class TestBisectingExporter:
@@ -338,8 +398,9 @@ class TestAutoInstrument:
 
         monkeypatch.setattr(
             "promptic_sdk.tracing._INSTRUMENTORS",
-            [("opentelemetry.instrumentation.openai", "OpenAIInstrumentor")],
+            [("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor")],
         )
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
 
         with patch(
             "importlib.import_module",
@@ -348,6 +409,280 @@ class TestAutoInstrument:
             _auto_instrument()
 
         assert calls == [{"upload_base64_image": None}, "instrumented"]
+
+    def test_auto_instrument_uses_explicit_selection(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
+            def instrument(self):
+                calls.append("openai")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                calls.append("langchain")
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            _auto_instrument(instrumentors=["langchain"])
+
+        assert calls == ["langchain"]
+
+    def test_auto_instrument_reads_env_selection(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeOpenAIInstrumentor:
+            def instrument(self):
+                calls.append("openai")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                calls.append("langchain")
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setenv("PROMPTIC_INSTRUMENTORS", "openai,langchain")
+        monkeypatch.setenv("PROMPTIC_EXCLUDE_INSTRUMENTORS", "openai")
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            _auto_instrument()
+
+        assert calls == ["langchain"]
+
+    def test_auto_instrument_rejects_comma_selection_in_direct_api(self):
+        with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
+            _auto_instrument(instrumentors=cast(Any, "openai,langchain"))
+
+    def test_auto_instrument_treats_empty_env_selection_as_unset(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
+            def instrument(self):
+                calls.append("openai")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                calls.append("langchain")
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setenv("PROMPTIC_INSTRUMENTORS", "  ")
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch("importlib.import_module", side_effect=fake_import):
+            _auto_instrument()
+
+        assert calls == ["openai", "langchain"]
+
+    def test_auto_instrument_rejects_unknown_names(self):
+        with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
+            _auto_instrument(instrumentors=cast(Any, ["does-not-exist"]))
+
+    def test_auto_instrument_honors_dashed_claude_agent_alias(self, monkeypatch):
+        calls: list[str] = []
+
+        class FakeClaudeAgentSdkInstrumentor:
+            def instrument(self):
+                calls.append("claude_agent_sdk")
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                (
+                    "claude_agent_sdk",
+                    "opentelemetry.instrumentation.claude_agent_sdk",
+                    "ClaudeAgentSdkInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"claude_agent_sdk"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with patch(
+            "importlib.import_module",
+            return_value=SimpleNamespace(ClaudeAgentSdkInstrumentor=FakeClaudeAgentSdkInstrumentor),
+        ):
+            _auto_instrument(instrumentors=["claude-agent"])
+
+        assert calls == ["claude_agent_sdk"]
+
+    def test_auto_instrument_warns_on_langsmith_otel_and_langchain(self, monkeypatch, caplog):
+        monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                pass
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [("langchain", "opentelemetry.instrumentation.langchain", "LangchainInstrumentor")],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with (
+            patch(
+                "importlib.import_module",
+                return_value=SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor),
+            ),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["langchain"])
+
+        assert "LANGSMITH_OTEL_ENABLED=true" in caplog.text
+
+    def test_auto_instrument_warns_on_langsmith_tracing_only_for_langchain(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
+            def instrument(self):
+                pass
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                pass
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with (
+            patch("importlib.import_module", side_effect=fake_import),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["openai"])
+
+        assert "LANGSMITH_TRACING=true" not in caplog.text
+
+        caplog.clear()
+        with (
+            patch("importlib.import_module", side_effect=fake_import),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["langchain"])
+
+        assert "LANGSMITH_TRACING=true" in caplog.text
+
+    def test_auto_instrument_does_not_warn_for_missing_conflicting_instrumentors(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: False)
+
+        with (
+            patch("importlib.import_module", side_effect=ImportError("missing dependency")),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["openai", "langchain", "openai_agents"])
+
+        assert "duplicate" not in caplog.text
+        assert "OPENAI_AGENTS_DISABLE_TRACING" not in caplog.text
+
+    def test_auto_instrument_skips_missing_optional_modules_at_debug(self, monkeypatch, caplog):
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: False)
+
+        with (
+            patch("importlib.import_module", side_effect=ImportError("missing dependency")),
+            caplog.at_level("DEBUG", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["bedrock"])
+
+        assert "skipping optional bedrock instrumentor" in caplog.text
+
+    def test_auto_instrument_warns_for_installed_instrumentor_import_errors(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with (
+            patch("importlib.import_module", side_effect=ImportError("broken dependency")),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["bedrock"])
+
+        assert "failed to import installed bedrock instrumentor" in caplog.text
 
 
 class TestArtifactSanitizer:
@@ -849,6 +1184,31 @@ class TestArtifactUploader:
 
 
 class TestArtifactHelper:
+    def test_existing_file_upload_preserves_manual_source_field(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        path = tmp_path / "report.txt"
+        path.write_text("report body")
+        calls = []
+
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
+            calls.append((content, mime_type, source_path, source_field, preview))
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(path)
+
+        assert ref.id == "artifact-id"
+        assert calls == [(b"report body", "text/plain", str(path), "manual", "report body")]
+
     def test_missing_path_like_string_raises(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
 
@@ -878,7 +1238,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -901,7 +1263,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -924,7 +1288,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",
@@ -954,7 +1320,9 @@ class TestArtifactHelper:
 
         calls = []
 
-        def fake_upload(self, content, *, mime_type, source_path="$", preview=None):
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+        ):
             calls.append((content, mime_type, source_path, preview))
             return ArtifactReference(
                 id="artifact-id",

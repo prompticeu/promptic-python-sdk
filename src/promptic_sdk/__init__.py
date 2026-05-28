@@ -48,7 +48,15 @@ from promptic_sdk.models import (
     TracingStats,
     Workspace,
 )
-from promptic_sdk.tracing import ArtifactReference, ai_component, artifact, dataset, init
+from promptic_sdk.tracing import (
+    ArtifactReference,
+    InstrumentorName,
+    InstrumentorSelection,
+    ai_component,
+    artifact,
+    dataset,
+    init,
+)
 
 __version__ = "0.15.0"
 __all__ = [
@@ -60,6 +68,8 @@ __all__ = [
     "dataset",
     "init",
     "ArtifactReference",
+    "InstrumentorName",
+    "InstrumentorSelection",
     # Models
     "AgentEvaluation",
     "AgentEvaluationList",
