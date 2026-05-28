@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.16.0 (2026-05-28)
+
+## Features
+
+- Added support for instrumentor selection in tracing.
+
+## Improvements
+
+- Updated client documentation to note 402 billing gate on start_experiment and create_evaluation.
+
 ## v0.15.0 (2026-05-23)
 
 Features
