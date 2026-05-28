@@ -8,6 +8,7 @@ runs:
       uses: arduino/setup-task@v2
       with:
         repo-token: ${{ github.token }}
+        version: "3.50.0"
 
     - name: Install uv and handle caching
       id: setup-uv
