@@ -874,8 +874,9 @@ def init(
         raise ValueError(msg)
 
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
+    selected_instrumentors = None
     if auto_instrument:
-        _selected_instrumentors(
+        selected_instrumentors = _selected_instrumentors(
             instrumentors,
             exclude_instrumentors=exclude_instrumentors,
         )
@@ -887,6 +888,7 @@ def init(
             _auto_instrument(
                 instrumentors=instrumentors,
                 exclude_instrumentors=exclude_instrumentors,
+                selected=selected_instrumentors,
             )
         return
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
@@ -934,6 +936,7 @@ def init(
         _auto_instrument(
             instrumentors=instrumentors,
             exclude_instrumentors=exclude_instrumentors,
+            selected=selected_instrumentors,
         )
 
 
@@ -1093,6 +1096,7 @@ def _auto_instrument(
     instrumentors: Iterable[str] | str | None = None,
     *,
     exclude_instrumentors: Iterable[str] | str | None = None,
+    selected: list[tuple[str, str, str]] | None = None,
 ) -> None:
     """Try to import and enable each known instrumentor.
 
@@ -1108,10 +1112,11 @@ def _auto_instrument(
     """
     import importlib
 
-    selected = _selected_instrumentors(
-        instrumentors,
-        exclude_instrumentors=exclude_instrumentors,
-    )
+    if selected is None:
+        selected = _selected_instrumentors(
+            instrumentors,
+            exclude_instrumentors=exclude_instrumentors,
+        )
     loaded_names: set[str] = set()
 
     for name, module_path, class_name in selected:

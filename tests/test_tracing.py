@@ -120,9 +120,11 @@ class TestInit:
                 exclude_instrumentors=["openai"],
             )
 
+        selected = [item for item in tracing_module._INSTRUMENTORS if item[0] == "langchain"]
         mock_auto.assert_called_once_with(
             instrumentors=["langchain"],
             exclude_instrumentors=["openai"],
+            selected=selected,
         )
 
     def test_init_validates_instrumentors_before_setting_provider(self, monkeypatch):
@@ -135,6 +137,26 @@ class TestInit:
 
         mock_exporter.assert_not_called()
         assert not trace._TRACER_PROVIDER_SET_ONCE._done  # noqa: SLF001
+
+    def test_init_reuses_generator_selection_after_validation(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        instrumentors = (name for name in ["langchain"])
+
+        with (
+            patch(
+                "promptic_sdk.tracing._OTLPSpanExporter413Aware",
+                return_value=MagicMock(),
+            ),
+            patch("promptic_sdk.tracing._auto_instrument") as mock_auto,
+        ):
+            init(auto_instrument=True, instrumentors=instrumentors)
+
+        selected = [item for item in tracing_module._INSTRUMENTORS if item[0] == "langchain"]
+        mock_auto.assert_called_once_with(
+            instrumentors=instrumentors,
+            exclude_instrumentors=None,
+            selected=selected,
+        )
 
     def test_init_endpoint_from_env(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
@@ -224,7 +246,11 @@ class TestInit:
         with patch("promptic_sdk.tracing._auto_instrument") as mock_auto:
             init(api_key="pk_external", auto_instrument=True)
 
-        mock_auto.assert_called_once_with(instrumentors=None, exclude_instrumentors=None)
+        mock_auto.assert_called_once_with(
+            instrumentors=None,
+            exclude_instrumentors=None,
+            selected=tracing_module._INSTRUMENTORS,
+        )
 
 
 class TestBisectingExporter:
