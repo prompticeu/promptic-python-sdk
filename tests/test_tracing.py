@@ -3,6 +3,7 @@
 import base64
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ import promptic_sdk.tracing as tracing_module
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
     ArtifactReference,
+    InstrumentorName,
     _ArtifactSanitizer,
     _ArtifactUploader,
     _auto_instrument,
@@ -133,14 +135,15 @@ class TestInit:
             patch("promptic_sdk.tracing._OTLPSpanExporter413Aware") as mock_exporter,
             pytest.raises(ValueError, match="Unknown Promptic instrumentor"),
         ):
-            init(auto_instrument=True, instrumentors=["does-not-exist"])
+            init(auto_instrument=True, instrumentors=cast(Any, ["does-not-exist"]))
 
         mock_exporter.assert_not_called()
         assert not trace._TRACER_PROVIDER_SET_ONCE._done  # noqa: SLF001
 
     def test_init_reuses_generator_selection_after_validation(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        instrumentors = (name for name in ["langchain"])
+        names: list[InstrumentorName] = ["langchain"]
+        instrumentors = (name for name in names)
 
         with (
             patch(
@@ -486,6 +489,10 @@ class TestAutoInstrument:
 
         assert calls == ["langchain"]
 
+    def test_auto_instrument_rejects_comma_selection_in_direct_api(self):
+        with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
+            _auto_instrument(instrumentors=cast(Any, "openai,langchain"))
+
     def test_auto_instrument_treats_empty_env_selection_as_unset(self, monkeypatch):
         calls: list[str] = []
 
@@ -529,7 +536,7 @@ class TestAutoInstrument:
 
     def test_auto_instrument_rejects_unknown_names(self):
         with pytest.raises(ValueError, match="Unknown Promptic instrumentor"):
-            _auto_instrument(instrumentors=["does-not-exist"])
+            _auto_instrument(instrumentors=cast(Any, ["does-not-exist"]))
 
     def test_auto_instrument_honors_dashed_claude_agent_alias(self, monkeypatch):
         calls: list[str] = []

@@ -17,7 +17,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypeAlias
 
 import httpx
 from opentelemetry import trace
@@ -34,6 +34,31 @@ _DEFAULT_ENDPOINT = "https://promptic.eu"
 PROMPTIC_COMPONENT_ATTR = "promptic.ai_component"
 PROMPTIC_DATASET_ATTR = "promptic.dataset"
 PROMPTIC_RUN_ATTR = "promptic.run"
+
+InstrumentorName: TypeAlias = Literal[
+    "openai",
+    "anthropic",
+    "google_generativeai",
+    "vertexai",
+    "bedrock",
+    "mistralai",
+    "cohere",
+    "langchain",
+    "openai_agents",
+    "claude_agent_sdk",
+    "google-generativeai",
+    "google",
+    "gemini",
+    "vertex",
+    "mistral",
+    "openai-agents",
+    "openaiagents",
+    "claude-agent-sdk",
+    "claude-agent",
+    "claude_agents",
+    "claude",
+]
+InstrumentorSelection: TypeAlias = InstrumentorName | Iterable[InstrumentorName]
 
 # Context variable that holds the current AI component name.
 _current_component: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -143,7 +168,7 @@ def _normalize_instrumentor_name(name: str) -> str:
 
 
 def _resolve_instrumentor_names(
-    names: Iterable[str] | str | None,
+    names: InstrumentorSelection | None,
     *,
     env_var: str,
     default: set[str],
@@ -151,7 +176,7 @@ def _resolve_instrumentor_names(
     if names is None:
         raw_names = _split_instrumentor_env(os.environ.get(env_var))
     elif isinstance(names, str):
-        raw_names = _split_instrumentor_env(names)
+        raw_names = [names]
     else:
         raw_names = list(names)
 
@@ -171,9 +196,9 @@ def _resolve_instrumentor_names(
 
 
 def _selected_instrumentors(
-    instrumentors: Iterable[str] | str | None = None,
+    instrumentors: InstrumentorSelection | None = None,
     *,
-    exclude_instrumentors: Iterable[str] | str | None = None,
+    exclude_instrumentors: InstrumentorSelection | None = None,
 ) -> list[tuple[str, str, str]]:
     selected = _resolve_instrumentor_names(
         instrumentors,
@@ -850,8 +875,8 @@ def init(
     api_key: str | None = None,
     endpoint: str | None = None,
     auto_instrument: bool = True,
-    instrumentors: Iterable[str] | str | None = None,
-    exclude_instrumentors: Iterable[str] | str | None = None,
+    instrumentors: InstrumentorSelection | None = None,
+    exclude_instrumentors: InstrumentorSelection | None = None,
     service_name: str | None = None,
 ) -> None:
     """Configure OpenTelemetry to send traces to Promptic.
@@ -1098,9 +1123,9 @@ def _instrumentor_module_exists(module_path: str) -> bool:
 
 
 def _auto_instrument(
-    instrumentors: Iterable[str] | str | None = None,
+    instrumentors: InstrumentorSelection | None = None,
     *,
-    exclude_instrumentors: Iterable[str] | str | None = None,
+    exclude_instrumentors: InstrumentorSelection | None = None,
     selected: list[tuple[str, str, str]] | None = None,
 ) -> None:
     """Try to import and enable each known instrumentor.
