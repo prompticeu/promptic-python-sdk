@@ -1074,6 +1074,15 @@ def _warn_on_instrumentor_conflicts(selected_names: set[str]) -> None:
         )
 
 
+def _instrumentor_module_exists(module_path: str) -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(module_path) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _auto_instrument(
     instrumentors: Iterable[str] | str | None = None,
     *,
@@ -1100,6 +1109,14 @@ def _auto_instrument(
     loaded_names: set[str] = set()
 
     for name, module_path, class_name in selected:
+        if not _instrumentor_module_exists(module_path):
+            logger.debug(
+                "Promptic: skipping optional %s instrumentor (%s could not be imported).",
+                name,
+                module_path,
+            )
+            continue
+
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
@@ -1107,11 +1124,12 @@ def _auto_instrument(
             loaded_names.add(name)
             logger.debug("Promptic: enabled %s.%s", module_path, class_name)
         except ImportError as exc:
-            logger.debug(
-                "Promptic: skipping optional %s instrumentor (%s could not be imported: %s).",
+            logger.warning(
+                "Promptic: failed to import installed %s instrumentor (%s): %s",
                 name,
                 module_path,
                 exc,
+                exc_info=True,
             )
         except Exception:
             logger.warning(

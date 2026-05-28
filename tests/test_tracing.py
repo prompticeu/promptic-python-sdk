@@ -360,6 +360,7 @@ class TestAutoInstrument:
             "promptic_sdk.tracing._INSTRUMENTORS",
             [("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor")],
         )
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
 
         with patch(
             "importlib.import_module",
@@ -399,6 +400,7 @@ class TestAutoInstrument:
             ],
         )
         monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
 
         with patch("importlib.import_module", side_effect=fake_import):
             _auto_instrument(instrumentors=["langchain"])
@@ -437,6 +439,7 @@ class TestAutoInstrument:
             ],
         )
         monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
 
         with patch("importlib.import_module", side_effect=fake_import):
             _auto_instrument()
@@ -459,6 +462,7 @@ class TestAutoInstrument:
             [("langchain", "opentelemetry.instrumentation.langchain", "LangchainInstrumentor")],
         )
         monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
 
         with (
             patch(
@@ -475,6 +479,7 @@ class TestAutoInstrument:
         self, monkeypatch, caplog
     ):
         monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: False)
 
         with (
             patch("importlib.import_module", side_effect=ImportError("missing dependency")),
@@ -485,7 +490,9 @@ class TestAutoInstrument:
         assert "duplicate" not in caplog.text
         assert "OPENAI_AGENTS_DISABLE_TRACING" not in caplog.text
 
-    def test_auto_instrument_skips_optional_import_errors_at_debug(self, caplog):
+    def test_auto_instrument_skips_missing_optional_modules_at_debug(self, monkeypatch, caplog):
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: False)
+
         with (
             patch("importlib.import_module", side_effect=ImportError("missing dependency")),
             caplog.at_level("DEBUG", logger="promptic_sdk"),
@@ -493,6 +500,19 @@ class TestAutoInstrument:
             _auto_instrument(instrumentors=["bedrock"])
 
         assert "skipping optional bedrock instrumentor" in caplog.text
+
+    def test_auto_instrument_warns_for_installed_instrumentor_import_errors(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with (
+            patch("importlib.import_module", side_effect=ImportError("broken dependency")),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["bedrock"])
+
+        assert "failed to import installed bedrock instrumentor" in caplog.text
 
 
 class TestArtifactSanitizer:
