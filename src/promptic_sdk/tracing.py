@@ -13,7 +13,7 @@ import logging
 import mimetypes
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
@@ -51,7 +51,7 @@ _current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 # Instrumentors that we try to auto-detect and enable.
-# Each entry: (module_path, class_name)
+# Each entry: (name, module_path, class_name)
 #
 # The first three cover direct LLM SDK calls (works across any framework).
 # The rest cover framework-level instrumentation; all emit OTel-official
@@ -59,20 +59,48 @@ _current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 #
 # Pydantic AI is intentionally absent — it ships its own OTel emitter; users
 # opt in by constructing the Agent with ``instrument=True``.
-_INSTRUMENTORS: list[tuple[str, str]] = [
+_INSTRUMENTORS: list[tuple[str, str, str]] = [
     # LLM providers (direct SDK calls) — emit gen_ai.* on every chat/completion.
-    ("opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
-    ("opentelemetry.instrumentation.anthropic", "AnthropicInstrumentor"),
-    ("opentelemetry.instrumentation.google_generativeai", "GoogleGenerativeAiInstrumentor"),
-    ("opentelemetry.instrumentation.vertexai", "VertexAIInstrumentor"),
-    ("opentelemetry.instrumentation.bedrock", "BedrockInstrumentor"),
-    ("opentelemetry.instrumentation.mistralai", "MistralAiInstrumentor"),
-    ("opentelemetry.instrumentation.cohere", "CohereInstrumentor"),
+    ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+    ("anthropic", "opentelemetry.instrumentation.anthropic", "AnthropicInstrumentor"),
+    (
+        "google_generativeai",
+        "opentelemetry.instrumentation.google_generativeai",
+        "GoogleGenerativeAiInstrumentor",
+    ),
+    ("vertexai", "opentelemetry.instrumentation.vertexai", "VertexAIInstrumentor"),
+    ("bedrock", "opentelemetry.instrumentation.bedrock", "BedrockInstrumentor"),
+    ("mistralai", "opentelemetry.instrumentation.mistralai", "MistralAiInstrumentor"),
+    ("cohere", "opentelemetry.instrumentation.cohere", "CohereInstrumentor"),
     # Agent frameworks — emit chain/tool/llm spans with the full graph structure.
-    ("opentelemetry.instrumentation.langchain", "LangchainInstrumentor"),
-    ("opentelemetry.instrumentation.openai_agents", "OpenAIAgentsInstrumentor"),
-    ("opentelemetry.instrumentation.claude_agent_sdk", "ClaudeAgentSdkInstrumentor"),
+    ("langchain", "opentelemetry.instrumentation.langchain", "LangchainInstrumentor"),
+    (
+        "openai_agents",
+        "opentelemetry.instrumentation.openai_agents",
+        "OpenAIAgentsInstrumentor",
+    ),
+    (
+        "claude_agent_sdk",
+        "opentelemetry.instrumentation.claude_agent_sdk",
+        "ClaudeAgentSdkInstrumentor",
+    ),
 ]
+
+_INSTRUMENTOR_ALIASES = {
+    "google-generativeai": "google_generativeai",
+    "google": "google_generativeai",
+    "gemini": "google_generativeai",
+    "vertex": "vertexai",
+    "mistral": "mistralai",
+    "openai-agents": "openai_agents",
+    "openaiagents": "openai_agents",
+    "claude-agent-sdk": "claude_agent_sdk",
+    "claude-agent": "claude_agent_sdk",
+    "claude_agents": "claude_agent_sdk",
+    "claude": "claude_agent_sdk",
+}
+
+_INSTRUMENTOR_NAMES = {name for name, _, _ in _INSTRUMENTORS}
 
 _OPENAI_INSTRUMENTATION_MODULE = "opentelemetry.instrumentation.openai"
 _ARTIFACT_URI_SCHEME = "promptic-artifact://"
@@ -99,6 +127,65 @@ _MEDIA_PATH_MARKERS = (
 
 _configured_api_key: str | None = None
 _configured_endpoint: str | None = None
+
+
+def _split_instrumentor_env(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    names = [item.strip() for item in re.split(r"[,;\s]+", value) if item.strip()]
+    return names
+
+
+def _normalize_instrumentor_name(name: str) -> str:
+    normalized = name.strip().lower().replace("-", "_")
+    return _INSTRUMENTOR_ALIASES.get(normalized, normalized)
+
+
+def _resolve_instrumentor_names(
+    names: Iterable[str] | str | None,
+    *,
+    env_var: str,
+    default: set[str],
+) -> set[str]:
+    if names is None:
+        raw_names = _split_instrumentor_env(os.environ.get(env_var))
+    elif isinstance(names, str):
+        raw_names = _split_instrumentor_env(names)
+    else:
+        raw_names = list(names)
+
+    if raw_names is None:
+        return set(default)
+
+    resolved = {_normalize_instrumentor_name(name) for name in raw_names}
+    unknown = sorted(resolved - _INSTRUMENTOR_NAMES)
+    if unknown:
+        msg = (
+            "Unknown Promptic instrumentor(s): "
+            f"{', '.join(unknown)}. Valid instrumentors: "
+            f"{', '.join(sorted(_INSTRUMENTOR_NAMES))}."
+        )
+        raise ValueError(msg)
+    return resolved
+
+
+def _selected_instrumentors(
+    instrumentors: Iterable[str] | str | None = None,
+    *,
+    exclude_instrumentors: Iterable[str] | str | None = None,
+) -> list[tuple[str, str, str]]:
+    selected = _resolve_instrumentor_names(
+        instrumentors,
+        env_var="PROMPTIC_INSTRUMENTORS",
+        default=_INSTRUMENTOR_NAMES,
+    )
+    excluded = _resolve_instrumentor_names(
+        exclude_instrumentors,
+        env_var="PROMPTIC_EXCLUDE_INSTRUMENTORS",
+        default=set(),
+    )
+    selected -= excluded
+    return [item for item in _INSTRUMENTORS if item[0] in selected]
 
 
 def _instrumentor_init_kwargs(module_path: str) -> dict[str, object]:
@@ -249,6 +336,7 @@ class _ArtifactUploader:
                 "sizeBytes": len(content),
                 "sha256": sha256,
                 "sourcePath": source_path,
+                "sourceField": _artifact_source_field(source_path),
                 "source": "direct_upload",
                 "preview": preview,
             },
@@ -299,6 +387,7 @@ class _ArtifactUploader:
                             "contentBase64": base64.b64encode(content).decode("ascii"),
                             "mimeType": mime_type,
                             "sourcePath": source_path,
+                            "sourceField": _artifact_source_field(source_path),
                             "preview": preview,
                         },
                     )
@@ -388,6 +477,10 @@ def _source_path_name(source_path: str) -> str:
     if "\\" in source_path:
         return PureWindowsPath(source_path).name or "artifact"
     return Path(source_path).name or "artifact"
+
+
+def _artifact_source_field(source_path: str) -> str:
+    return "manual" if source_path == "$" else "metadata"
 
 
 def _looks_like_path(value: str) -> bool:
@@ -752,6 +845,8 @@ def init(
     api_key: str | None = None,
     endpoint: str | None = None,
     auto_instrument: bool = True,
+    instrumentors: Iterable[str] | str | None = None,
+    exclude_instrumentors: Iterable[str] | str | None = None,
     service_name: str | None = None,
 ) -> None:
     """Configure OpenTelemetry to send traces to Promptic.
@@ -762,6 +857,10 @@ def init(
             then to ``https://promptic.eu``.
         auto_instrument: If True, auto-detect installed LLM client libraries and
             instrument them.
+        instrumentors: Optional instrumentor names to enable. Falls back to the
+            ``PROMPTIC_INSTRUMENTORS`` env var, then to all known instrumentors.
+        exclude_instrumentors: Optional instrumentor names to skip. Falls back to the
+            ``PROMPTIC_EXCLUDE_INSTRUMENTORS`` env var.
         service_name: OpenTelemetry ``service.name`` resource attribute.
     """
     global _configured_api_key, _configured_endpoint
@@ -779,7 +878,10 @@ def init(
         logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
         _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
         if auto_instrument:
-            _auto_instrument()
+            _auto_instrument(
+                instrumentors=instrumentors,
+                exclude_instrumentors=exclude_instrumentors,
+            )
         return
     traces_endpoint = f"{endpoint.rstrip('/')}/api/v1/traces"
 
@@ -823,7 +925,10 @@ def init(
     atexit.register(provider.shutdown)
 
     if auto_instrument:
-        _auto_instrument()
+        _auto_instrument(
+            instrumentors=instrumentors,
+            exclude_instrumentors=exclude_instrumentors,
+        )
 
 
 def _langsmith_tracing_context(
@@ -926,7 +1031,54 @@ def dataset(name: str) -> Iterator[None]:
         _current_dataset.reset(token)
 
 
-def _auto_instrument() -> None:
+def _warn_on_instrumentor_conflicts(selected_names: set[str]) -> None:
+    langsmith_tracing = os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
+    langsmith_otel = os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
+
+    if langsmith_tracing and not langsmith_otel:
+        logger.warning(
+            "Promptic: LANGSMITH_TRACING=true is set without LANGSMITH_OTEL_ENABLED=true. "
+            "LangSmith's callback handler can intercept LangChain/LangGraph runs before "
+            "OpenLLMetry can instrument them, so ChatOpenAI spans and tool definitions "
+            "may be missing from your Promptic traces. Unset LANGSMITH_TRACING, or set "
+            "LANGSMITH_OTEL_ENABLED=true and exclude the Promptic langchain instrumentor."
+        )
+
+    if langsmith_otel and "langchain" in selected_names:
+        logger.warning(
+            "Promptic: LANGSMITH_OTEL_ENABLED=true and the Promptic langchain "
+            "instrumentor are both active. LangSmith emits OTel spans through the "
+            "global Promptic tracer provider, so enabling both can duplicate "
+            "LangChain/LangGraph model spans. Disable one path, for example with "
+            "PROMPTIC_EXCLUDE_INSTRUMENTORS=langchain."
+        )
+
+    if "openai" in selected_names and "langchain" in selected_names:
+        logger.warning(
+            "Promptic: both openai and langchain instrumentors are enabled. "
+            "Frameworks built on LangChain, including LangGraph and DeepAgents, "
+            "can emit duplicate model spans when the underlying OpenAI SDK is also "
+            "instrumented. For LangChain-style apps, prefer "
+            "PROMPTIC_EXCLUDE_INSTRUMENTORS=openai or pass exclude_instrumentors=['openai']."
+        )
+
+    if (
+        "openai_agents" in selected_names
+        and os.environ.get("OPENAI_AGENTS_DISABLE_TRACING", "").lower() != "true"
+    ):
+        logger.warning(
+            "Promptic: openai_agents instrumentation is enabled while native OpenAI "
+            "Agents tracing is not disabled. Promptic tracing does not require the "
+            "OpenAI Agents native exporter; set OPENAI_AGENTS_DISABLE_TRACING=true "
+            "if you do not want a separate export to OpenAI."
+        )
+
+
+def _auto_instrument(
+    instrumentors: Iterable[str] | str | None = None,
+    *,
+    exclude_instrumentors: Iterable[str] | str | None = None,
+) -> None:
     """Try to import and enable each known instrumentor.
 
     OpenLLMetry's instrumentors are the primary path. They emit OTel-official
@@ -934,52 +1086,33 @@ def _auto_instrument() -> None:
     and cover LangGraph / deepagents correctly as of
     ``opentelemetry-instrumentation-langchain>=0.60.0``.
 
-    If the user manually sets ``LANGSMITH_OTEL_ENABLED=true`` in their env,
-    that path is also supported — both sources coexist, and the backend
-    de-duplicates/recognizes both. We do not auto-enable LangSmith anymore.
+    ``LANGSMITH_OTEL_ENABLED=true`` makes LangSmith emit spans through the same
+    global OTel provider that Promptic installs. Keep that path mutually
+    exclusive with the Promptic LangChain instrumentor to avoid duplicate model
+    spans.
     """
     import importlib
-    import importlib.util
 
-    # Warn when LangSmith tracing is active without its OTel bridge.  LangSmith
-    # installs a LangChain callback handler that intercepts model calls before
-    # OpenLLMetry's LangchainInstrumentor can hook them — resulting in missing
-    # ChatOpenAI.chat spans and silently broken agent-evaluation insights.
-    langsmith_tracing = os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
-    langsmith_otel = os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
-    if langsmith_tracing and not langsmith_otel:
-        logger.warning(
-            "Promptic: LANGSMITH_TRACING=true is set without LANGSMITH_OTEL_ENABLED=true. "
-            "LangSmith's callback handler will intercept LangChain/LangGraph runs before "
-            "OpenLLMetry can instrument them, so ChatOpenAI spans and tool definitions "
-            "may be missing from your Promptic traces. "
-            "Either unset LANGSMITH_TRACING, or set LANGSMITH_OTEL_ENABLED=true to "
-            "route LangSmith spans through OTel into Promptic."
-        )
+    selected = _selected_instrumentors(
+        instrumentors,
+        exclude_instrumentors=exclude_instrumentors,
+    )
+    selected_names = {name for name, _, _ in selected}
+    _warn_on_instrumentor_conflicts(selected_names)
 
-    for module_path, class_name in _INSTRUMENTORS:
+    for name, module_path, class_name in selected:
         try:
             mod = importlib.import_module(module_path)
             instrumentor_cls = getattr(mod, class_name)
             instrumentor_cls(**_instrumentor_init_kwargs(module_path)).instrument()
             logger.debug("Promptic: enabled %s.%s", module_path, class_name)
-        except ImportError:
-            # Distinguish "package not installed" from "package broken internally".
-            # If the top-level package can be found on sys.path, the ImportError
-            # is an internal compatibility issue that the user should know about.
-            try:
-                is_installed = importlib.util.find_spec(module_path) is not None
-            except (ModuleNotFoundError, ValueError):
-                is_installed = False
-            if is_installed:
-                logger.warning(
-                    "Promptic: %s is installed but failed to import — "
-                    "it may be incompatible with your current dependencies. "
-                    "Try upgrading or pinning a compatible version.",
-                    module_path,
-                    exc_info=True,
-                )
-            # else: package genuinely not installed — skip silently
+        except ImportError as exc:
+            logger.debug(
+                "Promptic: skipping optional %s instrumentor (%s could not be imported: %s).",
+                name,
+                module_path,
+                exc,
+            )
         except Exception:
             logger.warning(
                 "Promptic: failed to enable %s.%s — the package may be incompatible.",
