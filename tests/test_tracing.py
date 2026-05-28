@@ -584,6 +584,60 @@ class TestAutoInstrument:
 
         assert "LANGSMITH_OTEL_ENABLED=true" in caplog.text
 
+    def test_auto_instrument_warns_on_langsmith_tracing_only_for_langchain(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("LANGSMITH_TRACING", "true")
+
+        class FakeOpenAIInstrumentor:
+            def __init__(self, **kwargs):
+                pass
+
+            def instrument(self):
+                pass
+
+        class FakeLangchainInstrumentor:
+            def instrument(self):
+                pass
+
+        def fake_import(module_path):
+            if module_path.endswith(".openai"):
+                return SimpleNamespace(OpenAIInstrumentor=FakeOpenAIInstrumentor)
+            if module_path.endswith(".langchain"):
+                return SimpleNamespace(LangchainInstrumentor=FakeLangchainInstrumentor)
+            raise AssertionError(module_path)
+
+        monkeypatch.setattr(
+            "promptic_sdk.tracing._INSTRUMENTORS",
+            [
+                ("openai", "opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+                (
+                    "langchain",
+                    "opentelemetry.instrumentation.langchain",
+                    "LangchainInstrumentor",
+                ),
+            ],
+        )
+        monkeypatch.setattr("promptic_sdk.tracing._INSTRUMENTOR_NAMES", {"openai", "langchain"})
+        monkeypatch.setattr("promptic_sdk.tracing._instrumentor_module_exists", lambda _: True)
+
+        with (
+            patch("importlib.import_module", side_effect=fake_import),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["openai"])
+
+        assert "LANGSMITH_TRACING=true" not in caplog.text
+
+        caplog.clear()
+        with (
+            patch("importlib.import_module", side_effect=fake_import),
+            caplog.at_level("WARNING", logger="promptic_sdk"),
+        ):
+            _auto_instrument(instrumentors=["langchain"])
+
+        assert "LANGSMITH_TRACING=true" in caplog.text
+
     def test_auto_instrument_does_not_warn_for_missing_conflicting_instrumentors(
         self, monkeypatch, caplog
     ):

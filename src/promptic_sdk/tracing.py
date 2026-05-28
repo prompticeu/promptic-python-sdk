@@ -1045,7 +1045,7 @@ def _warn_on_instrumentor_conflicts(selected_names: set[str]) -> None:
     langsmith_tracing = os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
     langsmith_otel = os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() == "true"
 
-    if langsmith_tracing and not langsmith_otel:
+    if langsmith_tracing and not langsmith_otel and "langchain" in selected_names:
         logger.warning(
             "Promptic: LANGSMITH_TRACING=true is set without LANGSMITH_OTEL_ENABLED=true. "
             "LangSmith's callback handler can intercept LangChain/LangGraph runs before "
