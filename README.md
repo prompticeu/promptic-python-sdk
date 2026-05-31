@@ -48,7 +48,7 @@ For CI/CD or headless environments, use an API key instead:
 ```bash
 promptic configure
 # or set the environment variable:
-export PROMPTIC_API_KEY="pk_..."
+export PROMPTIC_API_KEY="ptc_..."
 ```
 
 ### 2. Send traces
