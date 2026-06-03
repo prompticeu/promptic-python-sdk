@@ -12,7 +12,7 @@ console = Console()
 
 def configure(
     api_key: str = typer.Option(
-        ..., prompt="Promptic API key", help="Your Promptic API key (pk_...)."
+        ..., prompt="Promptic API key", help="Your Promptic API key (ptc_...)."
     ),
     endpoint: str = typer.Option(
         "https://promptic.eu",
