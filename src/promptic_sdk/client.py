@@ -616,9 +616,7 @@ class PrompticClient:
         """Get an evaluation with results."""
         return self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
 
-    def list_judge_results(
-        self, component_id: str, evaluation_id: str
-    ) -> JudgeResultList:
+    def list_judge_results(self, component_id: str, evaluation_id: str) -> JudgeResultList:
         """List canonical judge result rows for an evaluation.
 
         Returns the per-(target, judge) rows produced by the evaluation. Each
@@ -627,9 +625,7 @@ class PrompticClient:
         immutable judge snapshot used to produce it. Re-runs of the same
         ``(evaluation, target, judgeKey)`` are versioned via ``version``.
         """
-        return self._get(
-            f"/components/{component_id}/evaluations/{evaluation_id}/judge-results"
-        )
+        return self._get(f"/components/{component_id}/evaluations/{evaluation_id}/judge-results")
 
     def wait_for_evaluation(
         self,
@@ -1174,9 +1170,7 @@ class AsyncPrompticClient:
         """Get an evaluation with results."""
         return await self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
 
-    async def list_judge_results(
-        self, component_id: str, evaluation_id: str
-    ) -> JudgeResultList:
+    async def list_judge_results(self, component_id: str, evaluation_id: str) -> JudgeResultList:
         """List canonical judge result rows for an evaluation.
 
         Returns the per-(target, judge) rows produced by the evaluation. Each
