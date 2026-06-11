@@ -513,14 +513,33 @@ class InsightResult(TypedDict):
     meta: InsightResultMeta
 
 
-class AgentEvaluation(TypedDict):
-    """Agent evaluation record."""
+EvaluationSubject = Literal["output", "trajectory", "annotation"]
+EvaluationTargetType = Literal["trace", "run", "dataset"]
+JudgeBackendType = Literal["deterministic", "llm_judge", "agent_judge"]
+
+
+class AgentEvaluation(TypedDict, total=False):
+    """Agent evaluation record.
+
+    Evaluations are scoped by ``subject`` (what the judge looks at: output,
+    trajectory, or annotation) and anchored to a durable resource by
+    ``targetType`` (trace, run, or dataset). Exactly one of ``datasetId``,
+    ``runId``, or ``traceDbId`` is populated for a given row.
+
+    ``subject``, ``targetType``, ``traceDbId``, and ``budget`` are marked as
+    optional so legacy evaluations created before the scoped-evaluation
+    migration still type-check.
+    """
 
     id: str
     name: str | None
     aiComponentId: str
-    datasetId: str
+    subject: EvaluationSubject
+    targetType: EvaluationTargetType
+    datasetId: str | None
     runId: str | None
+    traceDbId: str | None
+    budget: dict[str, Any] | None
     status: AgentEvaluationStatus
     results: InsightResult | None
     startedAt: str | None
@@ -533,3 +552,41 @@ class AgentEvaluationList(TypedDict):
     """List of agent evaluations."""
 
     data: list[AgentEvaluation]
+
+
+class JudgeResult(TypedDict):
+    """Canonical per-(target, judge) row produced by an evaluation.
+
+    Each row identifies its judge (``judgeKey`` / ``judgeName`` / ``backend``),
+    the concrete thing it scored via exactly one of ``datasetItemId``,
+    ``traceDbId``, ``annotationId``, or ``runId``, the verdict
+    (``score`` / ``rating`` / ``rationale`` / ``evidence`` / ``analysisPayload``),
+    and the immutable ``judgeSnapshot`` used to produce it. Re-runs of the
+    same ``(evaluation, target, judgeKey)`` are versioned via ``version``.
+    """
+
+    id: str
+    evaluationId: str
+    subject: EvaluationSubject
+    backend: JudgeBackendType
+    judgeKey: str
+    judgeName: str
+    traceDbId: str | None
+    traceOtlpId: str | None
+    datasetItemId: int | None
+    annotationId: str | None
+    runId: str | None
+    score: float | None
+    rating: str | None
+    rationale: str | None
+    evidence: Any
+    analysisPayload: Any
+    judgeSnapshot: dict[str, Any]
+    version: int
+    createdAt: str
+
+
+class JudgeResultList(TypedDict):
+    """Response wrapper for ``list_judge_results``."""
+
+    rows: list[JudgeResult]
