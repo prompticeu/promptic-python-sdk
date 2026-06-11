@@ -523,8 +523,11 @@ class AgentEvaluation(TypedDict, total=False):
 
     Evaluations are scoped by ``subject`` (what the judge looks at: output,
     trajectory, or annotation) and anchored to a durable resource by
-    ``targetType`` (trace, run, or dataset). Exactly one of ``datasetId``,
-    ``runId``, or ``traceDbId`` is populated for a given row.
+    ``targetType`` (trace, run, or dataset). The anchor IDs follow the
+    target type: ``trace`` evaluations populate only ``traceDbId``;
+    ``dataset`` evaluations populate only ``datasetId``; ``run`` evaluations
+    populate both ``runId`` and ``datasetId`` (since a run belongs to a
+    dataset).
 
     ``subject``, ``targetType``, ``traceDbId``, and ``budget`` are marked as
     optional so legacy evaluations created before the scoped-evaluation
