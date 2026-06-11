@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -518,7 +518,7 @@ EvaluationTargetType = Literal["trace", "run", "dataset"]
 JudgeBackendType = Literal["deterministic", "llm_judge", "agent_judge"]
 
 
-class AgentEvaluation(TypedDict, total=False):
+class AgentEvaluation(TypedDict):
     """Agent evaluation record.
 
     Evaluations are scoped by ``subject`` (what the judge looks at: output,
@@ -529,26 +529,27 @@ class AgentEvaluation(TypedDict, total=False):
     populate both ``runId`` and ``datasetId`` (since a run belongs to a
     dataset).
 
-    ``subject``, ``targetType``, ``traceDbId``, and ``budget`` are marked as
-    optional so legacy evaluations created before the scoped-evaluation
-    migration still type-check.
+    The four scoping fields (``subject``, ``targetType``, ``traceDbId``,
+    ``budget``) are wrapped in ``NotRequired`` so evaluations created before
+    the scoped-evaluation migration still type-check — every other field
+    remains required because the API always returns it.
     """
 
     id: str
     name: str | None
     aiComponentId: str
-    subject: EvaluationSubject
-    targetType: EvaluationTargetType
     datasetId: str | None
     runId: str | None
-    traceDbId: str | None
-    budget: dict[str, Any] | None
     status: AgentEvaluationStatus
     results: InsightResult | None
     startedAt: str | None
     completedAt: str | None
     createdAt: str
     updatedAt: str
+    subject: NotRequired[EvaluationSubject]
+    targetType: NotRequired[EvaluationTargetType]
+    traceDbId: NotRequired[str | None]
+    budget: NotRequired[dict[str, Any] | None]
 
 
 class AgentEvaluationList(TypedDict):
