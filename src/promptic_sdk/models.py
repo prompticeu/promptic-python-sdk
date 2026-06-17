@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired
+from typing import Any, Literal
 
 from typing_extensions import TypedDict
 
@@ -171,16 +171,31 @@ class EvaluatorList(TypedDict):
 # ── Iterations ───────────────────────────────────────────────────────
 
 
-class Iteration(TypedDict):
+class _IterationOptional(TypedDict, total=False):
+    """Optional iteration keys.
+
+    Carved into a ``total=False`` base so the optionality is recorded in
+    ``__required_keys__`` / ``__optional_keys__`` at runtime — using
+    ``NotRequired`` directly on the merged class is invisible to TypedDict
+    metaclass introspection under ``from __future__ import annotations``
+    (the annotation is stored as a forward-reference string).
+    """
+
+    # Mean target-model prediction latency for this iteration (ms),
+    # averaged across train + eval predictions. Excludes retries,
+    # rate-limit backoff, and failed attempts. The API omits this key
+    # on iterations completed before per-prediction latency tracking
+    # shipped.
+    avgPredictionLatencyMs: int | None
+
+
+class Iteration(_IterationOptional):
     """Experiment iteration record.
 
-    ``avgPredictionLatencyMs`` is the mean target-model prediction latency
-    for the iteration in milliseconds, averaged across train + eval
-    predictions. It excludes retries, rate-limit backoff, and failed
-    attempts, so it reflects real per-call response time. It is marked
-    ``NotRequired`` because the API omits it on iterations completed
-    before per-prediction latency tracking shipped; all other fields are
-    populated by every iteration response.
+    All keys below are populated by every iteration response. The
+    optional ``avgPredictionLatencyMs`` key (inherited from
+    ``_IterationOptional``) is absent on iterations completed before
+    per-prediction latency tracking shipped.
     """
 
     id: int
@@ -190,7 +205,6 @@ class Iteration(TypedDict):
     promptTokens: int | None
     overallNormalizedScore: float
     evalNormalizedScore: float | None
-    avgPredictionLatencyMs: NotRequired[int | None]
     schemaSnapshot: Any
     createdAt: str
     updatedAt: str
