@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -171,16 +171,16 @@ class EvaluatorList(TypedDict):
 # ── Iterations ───────────────────────────────────────────────────────
 
 
-class Iteration(TypedDict, total=False):
+class Iteration(TypedDict):
     """Experiment iteration record.
 
     ``avgPredictionLatencyMs`` is the mean target-model prediction latency
     for the iteration in milliseconds, averaged across train + eval
     predictions. It excludes retries, rate-limit backoff, and failed
-    attempts, so it reflects real per-call response time. ``None`` on
-    iterations completed before the field was tracked. The TypedDict is
-    ``total=False`` so older response payloads that omit it still
-    type-check.
+    attempts, so it reflects real per-call response time. It is marked
+    ``NotRequired`` because the API omits it on iterations completed
+    before per-prediction latency tracking shipped; all other fields are
+    populated by every iteration response.
     """
 
     id: int
@@ -190,7 +190,7 @@ class Iteration(TypedDict, total=False):
     promptTokens: int | None
     overallNormalizedScore: float
     evalNormalizedScore: float | None
-    avgPredictionLatencyMs: int | None
+    avgPredictionLatencyMs: NotRequired[int | None]
     schemaSnapshot: Any
     createdAt: str
     updatedAt: str
