@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 ExperimentStatus = Literal["pending", "scheduled", "running", "completed", "failed"]
 ModelProvider = Literal["openai", "openrouter", "custom", "google"]
 OptimizerType = Literal["promptic", "prompticV2", "miproV2", "bootstrapFewShot", "gepa"]
-TaskType = Literal["classification", "textGeneration", "structuredOutput"]
+TaskType = Literal["classification", "textGeneration", "structuredOutput", "toolSelection"]
 EvaluatorType = Literal[
     "f1",
     "referenceJudge",
@@ -19,6 +19,7 @@ EvaluatorType = Literal[
     "generalJudge",
     "similarity",
     "structuredOutput",
+    "toolSelection",
 ]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
