@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -79,13 +79,13 @@ class Hyperparameters(TypedDict, total=False):
     enableCot: bool
 
 
-class Experiment(TypedDict, total=False):
+class Experiment(TypedDict):
     """Experiment record.
 
-    Marked ``total=False`` so older API responses that predate newer fields
-    (for example ``systemPrompt`` / ``optimizeSystemPrompt`` /
-    ``optimizedSystemPrompt``, which only ship with the tool-selection
-    optimizer) still type-check.
+    The ``systemPrompt`` / ``optimizeSystemPrompt`` / ``optimizedSystemPrompt``
+    fields are marked ``NotRequired`` because they only ship with the
+    tool-selection optimizer; older API responses (that predate the migration
+    adding the columns) omit them. The existing stable fields remain required.
     """
 
     id: str
@@ -117,9 +117,9 @@ class Experiment(TypedDict, total=False):
     # prompt used as context during evaluation. ``optimizeSystemPrompt`` is
     # the toggle that asks the optimizer to also rewrite the system prompt;
     # when on, the best variant is persisted as ``optimizedSystemPrompt``.
-    systemPrompt: str | None
-    optimizeSystemPrompt: bool
-    optimizedSystemPrompt: str | None
+    systemPrompt: NotRequired[str | None]
+    optimizeSystemPrompt: NotRequired[bool]
+    optimizedSystemPrompt: NotRequired[str | None]
 
 
 class ExperimentList(TypedDict):
