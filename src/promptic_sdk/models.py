@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 ExperimentStatus = Literal["pending", "scheduled", "running", "completed", "failed"]
 ModelProvider = Literal["openai", "openrouter", "custom", "google"]
 OptimizerType = Literal["promptic", "prompticV2", "miproV2", "bootstrapFewShot", "gepa"]
-TaskType = Literal["classification", "textGeneration", "structuredOutput"]
+TaskType = Literal["classification", "textGeneration", "structuredOutput", "toolSelection"]
 EvaluatorType = Literal[
     "f1",
     "referenceJudge",
@@ -19,6 +19,7 @@ EvaluatorType = Literal[
     "generalJudge",
     "similarity",
     "structuredOutput",
+    "toolSelection",
 ]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
@@ -78,8 +79,14 @@ class Hyperparameters(TypedDict, total=False):
     enableCot: bool
 
 
-class Experiment(TypedDict):
-    """Experiment record."""
+class Experiment(TypedDict, total=False):
+    """Experiment record.
+
+    Marked ``total=False`` so older API responses that predate newer fields
+    (for example ``systemPrompt`` / ``optimizeSystemPrompt`` /
+    ``optimizedSystemPrompt``, which only ship with the tool-selection
+    optimizer) still type-check.
+    """
 
     id: str
     name: str | None
@@ -106,6 +113,13 @@ class Experiment(TypedDict):
     errorMessage: str | None
     createdAt: str
     updatedAt: str
+    # Tool-selection experiments only. ``systemPrompt`` is the fixed system
+    # prompt used as context during evaluation. ``optimizeSystemPrompt`` is
+    # the toggle that asks the optimizer to also rewrite the system prompt;
+    # when on, the best variant is persisted as ``optimizedSystemPrompt``.
+    systemPrompt: str | None
+    optimizeSystemPrompt: bool
+    optimizedSystemPrompt: str | None
 
 
 class ExperimentList(TypedDict):
