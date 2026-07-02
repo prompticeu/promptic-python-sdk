@@ -78,8 +78,15 @@ class Hyperparameters(TypedDict, total=False):
     enableCot: bool
 
 
-class Experiment(TypedDict):
-    """Experiment record."""
+class Experiment(TypedDict, total=False):
+    """Experiment record.
+
+    Marked ``total=False`` because Promptic keeps adding optional
+    fields to this record over time; older API responses omit
+    the newest fields (``modelGridId`` / ``modelGridSourceExperimentId``
+    / ``modelGridIndex`` are populated only for experiments spawned
+    by a model-grid search).
+    """
 
     id: str
     name: str | None
@@ -99,6 +106,9 @@ class Experiment(TypedDict):
     initialPredictionModelSchema: Any
     runNumber: int | None
     hyperparameters: Hyperparameters
+    modelGridId: str | None
+    modelGridSourceExperimentId: str | None
+    modelGridIndex: int | None
     startedAt: str | None
     endedAt: str | None
     retries: int
