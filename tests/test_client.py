@@ -290,7 +290,7 @@ class TestPrompticClient:
 
     def test_create_tool_selection_experiment(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
-        captured: dict[str, object] = {}
+        captured: dict = {}
 
         with PrompticClient() as client:
 
