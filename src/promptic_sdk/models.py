@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -513,13 +513,32 @@ class InsightResult(TypedDict):
     meta: InsightResultMeta
 
 
+EvaluationSubject = Literal["output", "trajectory", "annotation"]
+EvaluationTargetType = Literal["trace", "run", "dataset"]
+JudgeBackendType = Literal["deterministic", "llm_judge", "agent_judge"]
+
+
 class AgentEvaluation(TypedDict):
-    """Agent evaluation record."""
+    """Agent evaluation record.
+
+    Evaluations are scoped by ``subject`` (what the judge looks at: output,
+    trajectory, or annotation) and anchored to a durable resource by
+    ``targetType`` (trace, run, or dataset). The anchor IDs follow the
+    target type: ``trace`` evaluations populate only ``traceDbId``;
+    ``dataset`` evaluations populate only ``datasetId``; ``run`` evaluations
+    populate both ``runId`` and ``datasetId`` (since a run belongs to a
+    dataset).
+
+    The four scoping fields (``subject``, ``targetType``, ``traceDbId``,
+    ``budget``) are wrapped in ``NotRequired`` so evaluations created before
+    the scoped-evaluation migration still type-check — every other field
+    remains required because the API always returns it.
+    """
 
     id: str
     name: str | None
     aiComponentId: str
-    datasetId: str
+    datasetId: str | None
     runId: str | None
     status: AgentEvaluationStatus
     results: InsightResult | None
@@ -527,9 +546,51 @@ class AgentEvaluation(TypedDict):
     completedAt: str | None
     createdAt: str
     updatedAt: str
+    subject: NotRequired[EvaluationSubject]
+    targetType: NotRequired[EvaluationTargetType]
+    traceDbId: NotRequired[str | None]
+    budget: NotRequired[dict[str, Any] | None]
 
 
 class AgentEvaluationList(TypedDict):
     """List of agent evaluations."""
 
     data: list[AgentEvaluation]
+
+
+class JudgeResult(TypedDict):
+    """Canonical per-(target, judge) row produced by an evaluation.
+
+    Each row identifies its judge (``judgeKey`` / ``judgeName`` / ``backend``),
+    the concrete thing it scored via exactly one of ``datasetItemId``,
+    ``traceDbId``, ``annotationId``, or ``runId``, the verdict
+    (``score`` / ``rating`` / ``rationale`` / ``evidence`` / ``analysisPayload``),
+    and the immutable ``judgeSnapshot`` used to produce it. Re-runs of the
+    same ``(evaluation, target, judgeKey)`` are versioned via ``version``.
+    """
+
+    id: str
+    evaluationId: str
+    subject: EvaluationSubject
+    backend: JudgeBackendType
+    judgeKey: str
+    judgeName: str
+    traceDbId: str | None
+    traceOtlpId: str | None
+    datasetItemId: int | None
+    annotationId: str | None
+    runId: str | None
+    score: float | None
+    rating: str | None
+    rationale: str | None
+    evidence: Any
+    analysisPayload: Any
+    judgeSnapshot: dict[str, Any]
+    version: int
+    createdAt: str
+
+
+class JudgeResultList(TypedDict):
+    """Response wrapper for ``list_judge_results``."""
+
+    rows: list[JudgeResult]

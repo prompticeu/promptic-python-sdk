@@ -33,6 +33,7 @@ from promptic_sdk.models import (
     ExperimentStarted,
     IterationList,
     IterationWithScores,
+    JudgeResultList,
     Observation,
     ObservationList,
     Run,
@@ -615,6 +616,17 @@ class PrompticClient:
         """Get an evaluation with results."""
         return self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
 
+    def list_judge_results(self, component_id: str, evaluation_id: str) -> JudgeResultList:
+        """List canonical judge result rows for an evaluation.
+
+        Returns the per-(target, judge) rows produced by the evaluation. Each
+        row carries the judge identity, the concrete target it scored, the
+        verdict (score, rationale, evidence, analysis payload), and the
+        immutable judge snapshot used to produce it. Re-runs of the same
+        ``(evaluation, target, judgeKey)`` are versioned via ``version``.
+        """
+        return self._get(f"/components/{component_id}/evaluations/{evaluation_id}/judge-results")
+
     def wait_for_evaluation(
         self,
         component_id: str,
@@ -1157,6 +1169,19 @@ class AsyncPrompticClient:
     async def get_evaluation(self, component_id: str, evaluation_id: str) -> AgentEvaluation:
         """Get an evaluation with results."""
         return await self._get(f"/components/{component_id}/evaluations/{evaluation_id}")
+
+    async def list_judge_results(self, component_id: str, evaluation_id: str) -> JudgeResultList:
+        """List canonical judge result rows for an evaluation.
+
+        Returns the per-(target, judge) rows produced by the evaluation. Each
+        row carries the judge identity, the concrete target it scored, the
+        verdict (score, rationale, evidence, analysis payload), and the
+        immutable judge snapshot used to produce it. Re-runs of the same
+        ``(evaluation, target, judgeKey)`` are versioned via ``version``.
+        """
+        return await self._get(
+            f"/components/{component_id}/evaluations/{evaluation_id}/judge-results"
+        )
 
     async def wait_for_evaluation(
         self,
