@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired
+from typing import Any, Literal
 
 from typing_extensions import TypedDict
 
@@ -79,14 +79,8 @@ class Hyperparameters(TypedDict, total=False):
     enableCot: bool
 
 
-class Experiment(TypedDict):
-    """Experiment record.
-
-    The ``systemPrompt`` / ``optimizeSystemPrompt`` / ``optimizedSystemPrompt``
-    fields are marked ``NotRequired`` because they only ship with the
-    tool-selection optimizer; older API responses (that predate the migration
-    adding the columns) omit them. The existing stable fields remain required.
-    """
+class _ExperimentRequired(TypedDict):
+    """Fields present on every experiment record."""
 
     id: str
     name: str | None
@@ -113,13 +107,29 @@ class Experiment(TypedDict):
     errorMessage: str | None
     createdAt: str
     updatedAt: str
+
+
+class Experiment(_ExperimentRequired, total=False):
+    """Experiment record.
+
+    The three ``*SystemPrompt`` fields only ship with the tool-selection
+    optimizer; older API responses (that predate those columns) omit them, so
+    they are optional. They live on this ``total=False`` subclass — rather than
+    as ``NotRequired`` markers on a single TypedDict — because this module uses
+    ``from __future__ import annotations``: under postponed evaluation the
+    ``NotRequired`` wrapper is stored as a string and the runtime metadata
+    (``__required_keys__`` / ``__optional_keys__``) would wrongly treat the
+    fields as required. The base/extension split keeps the optionality correct
+    at runtime for anyone introspecting the model.
+    """
+
     # Tool-selection experiments only. ``systemPrompt`` is the fixed system
     # prompt used as context during evaluation. ``optimizeSystemPrompt`` is
     # the toggle that asks the optimizer to also rewrite the system prompt;
     # when on, the best variant is persisted as ``optimizedSystemPrompt``.
-    systemPrompt: NotRequired[str | None]
-    optimizeSystemPrompt: NotRequired[bool]
-    optimizedSystemPrompt: NotRequired[str | None]
+    systemPrompt: str | None
+    optimizeSystemPrompt: bool
+    optimizedSystemPrompt: str | None
 
 
 class ExperimentList(TypedDict):
