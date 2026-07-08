@@ -171,8 +171,32 @@ class EvaluatorList(TypedDict):
 # ── Iterations ───────────────────────────────────────────────────────
 
 
-class Iteration(TypedDict):
-    """Experiment iteration record."""
+class _IterationOptional(TypedDict, total=False):
+    """Optional iteration keys.
+
+    Carved into a ``total=False`` base so the optionality is recorded in
+    ``__required_keys__`` / ``__optional_keys__`` at runtime — using
+    ``NotRequired`` directly on the merged class is invisible to TypedDict
+    metaclass introspection under ``from __future__ import annotations``
+    (the annotation is stored as a forward-reference string).
+    """
+
+    # Mean target-model prediction latency for this iteration (ms),
+    # averaged across train + eval predictions. Excludes retries,
+    # rate-limit backoff, and failed attempts. The API omits this key
+    # on iterations completed before per-prediction latency tracking
+    # shipped.
+    avgPredictionLatencyMs: int | None
+
+
+class Iteration(_IterationOptional):
+    """Experiment iteration record.
+
+    All keys below are populated by every iteration response. The
+    optional ``avgPredictionLatencyMs`` key (inherited from
+    ``_IterationOptional``) is absent on iterations completed before
+    per-prediction latency tracking shipped.
+    """
 
     id: int
     experimentId: str
