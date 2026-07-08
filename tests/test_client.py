@@ -1,5 +1,7 @@
 """Tests for the platform client."""
 
+import json
+
 import httpx
 import pytest
 
@@ -285,6 +287,55 @@ class TestPrompticClient:
 
             client.duplicate_experiment("src", initial_prompt_override="hello world")
             assert b'"initialPromptOverride":"hello world"' in captured["body"]
+
+    def test_create_tool_selection_experiment(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        captured: dict[str, object] = {}
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.method == "POST"
+                assert str(request.url).endswith("/experiments/tool-selection")
+                captured["body"] = json.loads(request.content)
+                return httpx.Response(201, json={"id": "exp_1", "taskType": "toolSelection"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = client.create_tool_selection_experiment(
+                "comp_1",
+                tools=[
+                    {"name": "search", "description": "find", "input_schema": {"type": "object"}}
+                ],
+                test_cases=[
+                    {"query": "find x", "expected_tool": "search"},
+                    {"query": "chit chat", "expected_tool": ""},
+                ],
+                system_prompt="be precise",
+                train_split_ratio=0.8,
+            )
+
+        assert result == {"id": "exp_1", "taskType": "toolSelection"}
+        body = captured["body"]
+        # snake_case inputs normalized to the API's camelCase shape
+        assert body["tools"] == [
+            {"name": "search", "description": "find", "inputSchema": {"type": "object"}}
+        ]
+        assert body["testCases"] == [
+            {"query": "find x", "expectedTool": "search"},
+            {"query": "chit chat", "expectedTool": ""},
+        ]
+        # defaults + passthrough
+        assert body["toolSource"] == "manual"
+        assert body["optimizeSystemPrompt"] is False
+        assert body["systemPrompt"] == "be precise"
+        assert body["trainSplitRatio"] == 0.8
+        # target_model omitted so the platform applies its default
+        assert "targetModel" not in body
 
 
 class TestAsyncPrompticClient:

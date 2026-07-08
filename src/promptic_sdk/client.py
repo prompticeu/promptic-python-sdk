@@ -98,6 +98,66 @@ def _normalize_observation_payloads(observations: list[dict[str, Any]]) -> list[
     return [_normalize_observation_payload(obs) for obs in observations]
 
 
+def _normalize_tool_selection_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a tool definition to the API shape.
+
+    Accepts ``input_schema`` (snake) or ``inputSchema`` (camel); both are sent
+    as ``inputSchema``.
+    """
+    out: dict[str, Any] = {"name": tool["name"], "description": tool["description"]}
+    schema = tool.get("input_schema", tool.get("inputSchema"))
+    if schema is not None:
+        out["inputSchema"] = schema
+    return out
+
+
+def _normalize_tool_selection_test_case(test_case: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a test case to the API shape.
+
+    Accepts ``expected_tool`` (snake) or ``expectedTool`` (camel). Use an empty
+    string (or ``"none"``) for queries that should trigger no tool.
+    """
+    expected = test_case.get("expected_tool", test_case.get("expectedTool", ""))
+    return {"query": test_case["query"], "expectedTool": expected}
+
+
+def _tool_selection_body(
+    ai_component_id: str,
+    tools: list[dict[str, Any]],
+    test_cases: list[dict[str, Any]],
+    *,
+    target_model: str | None,
+    tool_source: str,
+    system_prompt: str | None,
+    optimize_system_prompt: bool,
+    epochs: int | None,
+    train_split_ratio: float | None,
+    name: str | None,
+    description: str | None,
+) -> dict[str, Any]:
+    """Build the request body shared by the sync and async clients."""
+    body: dict[str, Any] = {
+        "aiComponentId": ai_component_id,
+        "tools": [_normalize_tool_selection_tool(t) for t in tools],
+        "testCases": [_normalize_tool_selection_test_case(tc) for tc in test_cases],
+        "toolSource": tool_source,
+        "optimizeSystemPrompt": optimize_system_prompt,
+    }
+    if target_model is not None:
+        body["targetModel"] = target_model
+    if system_prompt is not None:
+        body["systemPrompt"] = system_prompt
+    if epochs is not None:
+        body["epochs"] = epochs
+    if train_split_ratio is not None:
+        body["trainSplitRatio"] = train_split_ratio
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    return body
+
+
 @dataclass
 class PrompticClient:
     """Client for interacting with the Promptic platform API.
@@ -334,6 +394,69 @@ class PrompticClient:
         if initial_prediction_model_schema is not None:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
         return self._post("/experiments", json=body)
+
+    def create_tool_selection_experiment(
+        self,
+        ai_component_id: str,
+        *,
+        tools: list[dict[str, Any]],
+        test_cases: list[dict[str, Any]],
+        target_model: str | None = None,
+        tool_source: str = "manual",
+        system_prompt: str | None = None,
+        optimize_system_prompt: bool = False,
+        epochs: int | None = None,
+        train_split_ratio: float | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Experiment:
+        """Create a tool-selection ("toolSelection") experiment.
+
+        Creates the experiment together with its tool definitions, test cases,
+        and the tool-selection scorer in one call. The optimizer rewrites the
+        tool descriptions (and, optionally, the system prompt) so the target
+        model routes each query to the expected tool. The experiment is created
+        pending — call ``start_experiment`` to run it.
+
+        Args:
+            ai_component_id: AI component the experiment belongs to.
+            tools: Tool definitions, each ``{"name", "description"}`` with an
+                optional ``input_schema`` (or ``inputSchema``). At least one.
+            test_cases: Each ``{"query", "expected_tool"}`` (or ``expectedTool``).
+                Use an empty string (or ``"none"``) for the expected tool when the
+                query should trigger no tool. At least one.
+            target_model: Model whose tool selection is optimized. When omitted,
+                the platform applies its default.
+            tool_source: Provenance of the tool definitions — ``"manual"``
+                (supplied directly, the default) or ``"mcp"`` (fetched from an
+                MCP server).
+            system_prompt: Optional fixed system prompt used as context during
+                evaluation.
+            optimize_system_prompt: When True, the optimizer rewrites the system
+                prompt alongside the tool descriptions.
+            epochs: Optional number of optimization rounds.
+            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+                Omit to train and score on all test cases.
+            name: Optional experiment name.
+            description: Optional experiment description.
+
+        Returns:
+            The newly created (pending) experiment.
+        """
+        body = _tool_selection_body(
+            ai_component_id,
+            tools,
+            test_cases,
+            target_model=target_model,
+            tool_source=tool_source,
+            system_prompt=system_prompt,
+            optimize_system_prompt=optimize_system_prompt,
+            epochs=epochs,
+            train_split_ratio=train_split_ratio,
+            name=name,
+            description=description,
+        )
+        return self._post("/experiments/tool-selection", json=body)
 
     def get_experiment(self, experiment_id: str) -> Experiment:
         """Get an experiment by ID."""
@@ -891,6 +1014,69 @@ class AsyncPrompticClient:
         if initial_prediction_model_schema is not None:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
         return await self._post("/experiments", json=body)
+
+    async def create_tool_selection_experiment(
+        self,
+        ai_component_id: str,
+        *,
+        tools: list[dict[str, Any]],
+        test_cases: list[dict[str, Any]],
+        target_model: str | None = None,
+        tool_source: str = "manual",
+        system_prompt: str | None = None,
+        optimize_system_prompt: bool = False,
+        epochs: int | None = None,
+        train_split_ratio: float | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Experiment:
+        """Create a tool-selection ("toolSelection") experiment.
+
+        Creates the experiment together with its tool definitions, test cases,
+        and the tool-selection scorer in one call. The optimizer rewrites the
+        tool descriptions (and, optionally, the system prompt) so the target
+        model routes each query to the expected tool. The experiment is created
+        pending — call ``start_experiment`` to run it.
+
+        Args:
+            ai_component_id: AI component the experiment belongs to.
+            tools: Tool definitions, each ``{"name", "description"}`` with an
+                optional ``input_schema`` (or ``inputSchema``). At least one.
+            test_cases: Each ``{"query", "expected_tool"}`` (or ``expectedTool``).
+                Use an empty string (or ``"none"``) for the expected tool when the
+                query should trigger no tool. At least one.
+            target_model: Model whose tool selection is optimized. When omitted,
+                the platform applies its default.
+            tool_source: Provenance of the tool definitions — ``"manual"``
+                (supplied directly, the default) or ``"mcp"`` (fetched from an
+                MCP server).
+            system_prompt: Optional fixed system prompt used as context during
+                evaluation.
+            optimize_system_prompt: When True, the optimizer rewrites the system
+                prompt alongside the tool descriptions.
+            epochs: Optional number of optimization rounds.
+            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+                Omit to train and score on all test cases.
+            name: Optional experiment name.
+            description: Optional experiment description.
+
+        Returns:
+            The newly created (pending) experiment.
+        """
+        body = _tool_selection_body(
+            ai_component_id,
+            tools,
+            test_cases,
+            target_model=target_model,
+            tool_source=tool_source,
+            system_prompt=system_prompt,
+            optimize_system_prompt=optimize_system_prompt,
+            epochs=epochs,
+            train_split_ratio=train_split_ratio,
+            name=name,
+            description=description,
+        )
+        return await self._post("/experiments/tool-selection", json=body)
 
     async def get_experiment(self, experiment_id: str) -> Experiment:
         """Get an experiment by ID."""
