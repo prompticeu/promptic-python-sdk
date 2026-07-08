@@ -33,6 +33,8 @@ from promptic_sdk.models import (
     ExperimentStarted,
     IterationList,
     IterationWithScores,
+    ModelGridSearchStarted,
+    ModelGridSelection,
     Observation,
     ObservationList,
     Run,
@@ -361,6 +363,48 @@ class PrompticClient:
                 method, or is blocked by the free-tier limit.
         """
         return self._post(f"/experiments/{experiment_id}/start")
+
+    def start_model_grid_search(
+        self,
+        experiment_id: str,
+        model_selections: list[ModelGridSelection],
+    ) -> ModelGridSearchStarted:
+        """Fan out a source experiment across several target-model choices.
+
+        Clones the source experiment once per entry in ``model_selections``,
+        links the resulting children with a shared ``modelGridId``, and
+        enqueues each child through the same billing + queue path as
+        :meth:`start_experiment`.
+
+        Unsupported thinking levels are silently downgraded to "no
+        thinking" on the server, and duplicates (same model + effective
+        thinking level) are collapsed before the grid is created. Between
+        2 and 8 distinct selections must survive that normalization.
+
+        Args:
+            experiment_id: Source experiment ID the grid is branched from.
+                Its AI component and workspace are derived server-side.
+            model_selections: 2-8 ``{"model": str, "thinkingLevel": str | None}``
+                entries describing the target models to compare.
+
+        Returns:
+            ``ModelGridSearchStarted`` with the shared ``modelGridId`` and
+            three lists of child experiment IDs: ``experimentIds`` (all
+            children created), ``startedExperimentIds`` (successfully
+            enqueued), and ``failedExperimentIds`` (created but enqueue
+            failed — retry via :meth:`start_experiment`).
+
+        Raises:
+            PrompticAPIError: ``400`` when fewer than 2 or more than 8
+                selections survive normalization, or a chosen model is not
+                available in the workspace; ``402`` when the workspace's
+                billing state refuses new experiments; ``404`` when the
+                source experiment is not visible to the caller.
+        """
+        return self._post(
+            f"/experiments/{experiment_id}/model-grid-search",
+            json={"modelSelections": list(model_selections)},
+        )
 
     def duplicate_experiment(
         self,
@@ -913,6 +957,21 @@ class AsyncPrompticClient:
                 method, or is blocked by the free-tier limit.
         """
         return await self._post(f"/experiments/{experiment_id}/start")
+
+    async def start_model_grid_search(
+        self,
+        experiment_id: str,
+        model_selections: list[ModelGridSelection],
+    ) -> ModelGridSearchStarted:
+        """Fan out a source experiment across several target-model choices.
+
+        See :meth:`PrompticClient.start_model_grid_search` for behavior,
+        argument, and error details.
+        """
+        return await self._post(
+            f"/experiments/{experiment_id}/model-grid-search",
+            json={"modelSelections": list(model_selections)},
+        )
 
     async def duplicate_experiment(
         self,

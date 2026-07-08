@@ -124,6 +124,40 @@ class ExperimentList(TypedDict):
     data: list[Experiment]
 
 
+class ModelGridSelection(TypedDict, total=False):
+    """One target-model entry in a model-grid search request.
+
+    ``model`` is required; ``thinkingLevel`` is optional and only meaningful
+    for models that support reasoning/thinking. Unsupported levels are
+    silently downgraded to "no thinking" by the server, and duplicates
+    (same model + effective thinking level) are collapsed before the grid
+    is created.
+    """
+
+    model: str
+    thinkingLevel: str | None
+
+
+class ModelGridSearchStarted(TypedDict):
+    """Response from ``start_model_grid_search``.
+
+    Attributes:
+        modelGridId: UUID that links every child experiment in this grid.
+        experimentIds: All child experiment IDs the grid produced (after
+            deduplication and thinking-level normalization).
+        startedExperimentIds: Subset of ``experimentIds`` that successfully
+            transitioned to ``scheduled`` and were enqueued for training.
+        failedExperimentIds: Subset of ``experimentIds`` whose enqueue
+            failed after the grid was already created (partial success —
+            the caller may retry these via ``start_experiment``).
+    """
+
+    modelGridId: str
+    experimentIds: list[str]
+    startedExperimentIds: list[str]
+    failedExperimentIds: list[str]
+
+
 class ExperimentStarted(TypedDict):
     """Response after starting an experiment."""
 
