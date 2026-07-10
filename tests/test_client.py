@@ -454,3 +454,59 @@ class TestAsyncPrompticClient:
         assert result["id"] == "new-exp"
         assert "/experiments/src/duplicate" in captured["url"]
         assert b'"continueFromOptimized":true' in captured["body"]
+
+
+class TestAIApplicationScope:
+    """AI Application scope resolution, header, and endpoint."""
+
+    def test_ai_application_id_sets_header(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        client = PrompticClient(ai_application_id="app-1")
+        assert client._client.headers["X-AI-Application-Id"] == "app-1"
+        assert client.ai_application_id == "app-1"
+        # Deprecated attribute stays in sync.
+        assert client.workspace_id == "app-1"
+        client.close()
+
+    def test_deprecated_workspace_id_argument(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        client = PrompticClient(workspace_id="legacy-1")
+        assert client._client.headers["X-AI-Application-Id"] == "legacy-1"
+        assert client.ai_application_id == "legacy-1"
+        client.close()
+
+    def test_env_fallbacks(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        monkeypatch.setenv("PROMPTIC_WORKSPACE_ID", "env-legacy")
+        client = PrompticClient()
+        assert client.ai_application_id == "env-legacy"
+        client.close()
+
+        monkeypatch.setenv("PROMPTIC_AI_APPLICATION_ID", "env-new")
+        client = PrompticClient()
+        # New env var wins over the legacy one.
+        assert client.ai_application_id == "env-new"
+        client.close()
+
+    def test_get_ai_application(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert str(request.url).endswith("/ai-application")
+                return httpx.Response(200, json={"id": "app-1", "name": "App"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert client.get_ai_application()["id"] == "app-1"
+            # Deprecated alias hits the same endpoint.
+            assert client.get_workspace()["id"] == "app-1"

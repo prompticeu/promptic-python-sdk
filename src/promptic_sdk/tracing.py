@@ -1007,11 +1007,11 @@ def ai_component(
 ) -> Iterator[None]:
     """Tag all spans created within this context with an AI Component name.
 
-    The server matches the name against AI Components in the workspace
+    The server matches the name against AI Components in the AI Application
     and links traces accordingly.
 
     Args:
-        name: AI Component name in the workspace.
+        name: AI Component name in the AI Application.
         dataset: Optional dataset name. When set, traces are automatically
             added to the named dataset (created if it doesn't exist).
         run: Optional run name. When set alongside ``dataset``, traces are

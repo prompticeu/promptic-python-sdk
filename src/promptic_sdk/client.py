@@ -15,6 +15,7 @@ import httpx
 from promptic_sdk.models import (
     AgentEvaluation,
     AgentEvaluationList,
+    AIApplication,
     Annotation,
     AnnotationList,
     Component,
@@ -44,7 +45,6 @@ from promptic_sdk.models import (
     TraceArtifactList,
     TraceList,
     TracingStats,
-    Workspace,
 )
 
 _DEFAULT_ENDPOINT = "https://promptic.eu"
@@ -107,7 +107,9 @@ class PrompticClient:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
         access_token: Session token from device auth login. Falls back to
             ``PROMPTIC_ACCESS_TOKEN`` env var.
-        workspace_id: Workspace ID for session-based auth. Falls back to
+        ai_application_id: AI Application ID for session-based auth. Falls back to
+            ``PROMPTIC_AI_APPLICATION_ID`` env var.
+        workspace_id: Deprecated alias for ``ai_application_id``. Falls back to
             ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
             then to ``https://promptic.eu``.
@@ -116,6 +118,7 @@ class PrompticClient:
 
     api_key: str | None = None
     access_token: str | None = None
+    ai_application_id: str | None = None
     workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
@@ -125,7 +128,16 @@ class PrompticClient:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
         self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
-        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        # Resolve the AI Application scope, accepting the deprecated ``workspace_id``
+        # argument and env var for backward compatibility.
+        self.ai_application_id = (
+            self.ai_application_id
+            or self.workspace_id
+            or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+            or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        )
+        # Keep the deprecated attribute in sync so existing readers still work.
+        self.workspace_id = self.ai_application_id
 
         if not self.api_key and not self.access_token:
             msg = (
@@ -143,8 +155,8 @@ class PrompticClient:
         auth_headers: dict[str, str] = {}
         if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
-            if self.workspace_id:
-                auth_headers["X-Workspace-Id"] = self.workspace_id
+            if self.ai_application_id:
+                auth_headers["X-AI-Application-Id"] = self.ai_application_id
         elif self.api_key:
             auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -257,16 +269,20 @@ class PrompticClient:
         """Get aggregated tracing stats."""
         return self._get("/traces/stats", params={"days_back": days_back})
 
-    # ── Workspace ────────────────────────────────────────────────────
+    # ── AI Application ───────────────────────────────────────────────
 
-    def get_workspace(self) -> Workspace:
-        """Get workspace info for the current API key."""
-        return self._get("/workspace")
+    def get_ai_application(self) -> AIApplication:
+        """Get AI Application info for the current API key."""
+        return self._get("/ai-application")
+
+    def get_workspace(self) -> AIApplication:
+        """Deprecated alias for :meth:`get_ai_application`."""
+        return self.get_ai_application()
 
     # ── Components ───────────────────────────────────────────────────
 
     def list_components(self) -> ComponentList:
-        """List all AI components in the workspace."""
+        """List all AI components in the AI Application."""
         return self._get("/components")
 
     def create_component(self, name: str, *, description: str | None = None) -> ComponentCreated:
@@ -358,7 +374,7 @@ class PrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         return self._post(f"/experiments/{experiment_id}/start")
@@ -388,7 +404,7 @@ class PrompticClient:
         Returns:
             The newly created experiment (with a ``modelUnavailable`` flag
             set when the source's target model is no longer available in
-            the workspace).
+            the AI Application).
         """
         body: dict[str, Any] = {}
         if continue_from_optimized:
@@ -598,7 +614,7 @@ class PrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         body: dict[str, Any] = {"datasetId": dataset_id}
@@ -684,7 +700,9 @@ class AsyncPrompticClient:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
         access_token: Session token from device auth login. Falls back to
             ``PROMPTIC_ACCESS_TOKEN`` env var.
-        workspace_id: Workspace ID for session-based auth. Falls back to
+        ai_application_id: AI Application ID for session-based auth. Falls back to
+            ``PROMPTIC_AI_APPLICATION_ID`` env var.
+        workspace_id: Deprecated alias for ``ai_application_id``. Falls back to
             ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
             then to ``https://promptic.eu``.
@@ -693,6 +711,7 @@ class AsyncPrompticClient:
 
     api_key: str | None = None
     access_token: str | None = None
+    ai_application_id: str | None = None
     workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
@@ -702,7 +721,16 @@ class AsyncPrompticClient:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
         self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
-        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        # Resolve the AI Application scope, accepting the deprecated ``workspace_id``
+        # argument and env var for backward compatibility.
+        self.ai_application_id = (
+            self.ai_application_id
+            or self.workspace_id
+            or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+            or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        )
+        # Keep the deprecated attribute in sync so existing readers still work.
+        self.workspace_id = self.ai_application_id
 
         if not self.api_key and not self.access_token:
             msg = (
@@ -720,8 +748,8 @@ class AsyncPrompticClient:
         auth_headers: dict[str, str] = {}
         if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
-            if self.workspace_id:
-                auth_headers["X-Workspace-Id"] = self.workspace_id
+            if self.ai_application_id:
+                auth_headers["X-AI-Application-Id"] = self.ai_application_id
         elif self.api_key:
             auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -823,16 +851,20 @@ class AsyncPrompticClient:
         """Get aggregated tracing stats."""
         return await self._get("/traces/stats", params={"days_back": days_back})
 
-    # ── Workspace ────────────────────────────────────────────────────
+    # ── AI Application ───────────────────────────────────────────────
 
-    async def get_workspace(self) -> Workspace:
-        """Get workspace info for the current API key."""
-        return await self._get("/workspace")
+    async def get_ai_application(self) -> AIApplication:
+        """Get AI Application info for the current API key."""
+        return await self._get("/ai-application")
+
+    async def get_workspace(self) -> AIApplication:
+        """Deprecated alias for :meth:`get_ai_application`."""
+        return await self.get_ai_application()
 
     # ── Components ───────────────────────────────────────────────────
 
     async def list_components(self) -> ComponentList:
-        """List all AI components in the workspace."""
+        """List all AI components in the AI Application."""
         return await self._get("/components")
 
     async def create_component(
@@ -921,7 +953,7 @@ class AsyncPrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         return await self._post(f"/experiments/{experiment_id}/start")
@@ -951,7 +983,7 @@ class AsyncPrompticClient:
         Returns:
             The newly created experiment (with a ``modelUnavailable`` flag
             set when the source's target model is no longer available in
-            the workspace).
+            the AI Application).
         """
         body: dict[str, Any] = {}
         if continue_from_optimized:
@@ -1152,7 +1184,7 @@ class AsyncPrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         body: dict[str, Any] = {"datasetId": dataset_id}

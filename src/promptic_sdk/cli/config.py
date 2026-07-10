@@ -17,7 +17,12 @@ class CliConfig:
     endpoint: str
     api_key: str | None = None
     access_token: str | None = None
-    workspace_id: str | None = None
+    ai_application_id: str | None = None
+
+    @property
+    def workspace_id(self) -> str | None:
+        """Deprecated alias for :attr:`ai_application_id`."""
+        return self.ai_application_id
 
 
 def get_config_path() -> Path:
@@ -36,7 +41,10 @@ def load_config() -> CliConfig | None:
     api_key = os.environ.get("PROMPTIC_API_KEY")
     access_token = os.environ.get("PROMPTIC_ACCESS_TOKEN")
     endpoint = os.environ.get("PROMPTIC_ENDPOINT")
-    workspace_id = os.environ.get("PROMPTIC_WORKSPACE_ID")
+    # Accept the deprecated ``PROMPTIC_WORKSPACE_ID`` env var as a fallback.
+    ai_application_id = os.environ.get("PROMPTIC_AI_APPLICATION_ID") or os.environ.get(
+        "PROMPTIC_WORKSPACE_ID"
+    )
 
     # Try loading from config file if env vars are missing
     file_config = _read_config_file()
@@ -46,8 +54,9 @@ def load_config() -> CliConfig | None:
         access_token = file_config.get("access_token")
     if not endpoint:
         endpoint = file_config.get("endpoint")
-    if not workspace_id:
-        workspace_id = file_config.get("workspace_id")
+    if not ai_application_id:
+        # ``ai_application_id`` is the current key; ``workspace_id`` is legacy.
+        ai_application_id = file_config.get("ai_application_id") or file_config.get("workspace_id")
 
     if not api_key and not access_token:
         return None
@@ -56,7 +65,7 @@ def load_config() -> CliConfig | None:
         endpoint=endpoint or "https://promptic.eu",
         api_key=api_key,
         access_token=access_token,
-        workspace_id=workspace_id,
+        ai_application_id=ai_application_id,
     )
 
 
@@ -76,17 +85,24 @@ def save_token(access_token: str, endpoint: str) -> None:
     _write_config_file(file_config)
 
 
-def save_workspace(workspace_id: str) -> None:
-    """Save selected workspace ID."""
+def save_ai_application(ai_application_id: str) -> None:
+    """Save selected AI Application ID."""
     file_config = _read_config_file()
-    file_config["workspace_id"] = workspace_id
+    file_config["ai_application_id"] = ai_application_id
+    # Drop the legacy key so the two never drift apart.
+    file_config.pop("workspace_id", None)
     _write_config_file(file_config)
 
 
+# Deprecated alias — kept for backward compatibility.
+save_workspace = save_ai_application
+
+
 def clear_token() -> None:
-    """Clear access token and workspace from config."""
+    """Clear access token and AI Application from config."""
     file_config = _read_config_file()
     file_config.pop("access_token", None)
+    file_config.pop("ai_application_id", None)
     file_config.pop("workspace_id", None)
     _write_config_file(file_config)
 

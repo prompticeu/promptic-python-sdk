@@ -5,6 +5,7 @@ from promptic_sdk.models import (
     AgentEvaluation,
     AgentEvaluationList,
     AgentEvaluationStatus,
+    AIApplication,
     Component,
     ComponentCreated,
     ComponentList,
@@ -79,6 +80,7 @@ __all__ = [
     "AgentEvaluation",
     "AgentEvaluationList",
     "AgentEvaluationStatus",
+    "AIApplication",
     "Component",
     "ComponentCreated",
     "ComponentList",
@@ -125,5 +127,6 @@ __all__ = [
     "TraceList",
     "TraceListItem",
     "TracingStats",
+    # Deprecated alias for AIApplication
     "Workspace",
 ]

@@ -10,7 +10,12 @@ import httpx
 import typer
 from rich.console import Console
 
-from promptic_sdk.cli.config import clear_token, get_config_path, save_token, save_workspace
+from promptic_sdk.cli.config import (
+    clear_token,
+    get_config_path,
+    save_ai_application,
+    save_token,
+)
 
 console = Console()
 err_console = Console(stderr=True)
@@ -89,7 +94,7 @@ def login(
             save_token(access_token, endpoint)
             console.print()
             console.print("[green]Login successful![/green]")
-            _auto_select_workspace(endpoint, access_token)
+            _auto_select_ai_application(endpoint, access_token)
             console.print(f"Configuration saved to {get_config_path()}")
             return
 
@@ -110,47 +115,47 @@ def login(
             raise typer.Exit(1)
 
 
-def _auto_select_workspace(endpoint: str, access_token: str) -> None:
-    """Fetch workspaces and auto-select or prompt the user to pick one."""
+def _auto_select_ai_application(endpoint: str, access_token: str) -> None:
+    """Fetch AI Applications and auto-select or prompt the user to pick one."""
     try:
         resp = httpx.get(
-            f"{endpoint.rstrip('/')}/api/v1/workspaces",
+            f"{endpoint.rstrip('/')}/api/v1/ai-applications",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=15,
         )
         resp.raise_for_status()
     except httpx.HTTPError:
         console.print(
-            "Run [bold]promptic workspace list[/bold] to see your workspaces, "
-            "then [bold]promptic workspace select <id>[/bold] to choose one.",
+            "Run [bold]promptic ai-application list[/bold] to see your AI applications, "
+            "then [bold]promptic ai-application select <id>[/bold] to choose one.",
             style="dim",
         )
         return
 
-    workspaces = resp.json().get("data", [])
-    if not workspaces:
-        console.print("No workspaces found.", style="dim")
+    ai_applications = resp.json().get("data", [])
+    if not ai_applications:
+        console.print("No AI applications found.", style="dim")
         return
 
-    if len(workspaces) == 1:
-        ws = workspaces[0]
-        save_workspace(ws["id"])
-        console.print(f"Workspace [bold]{ws['name']}[/bold] selected automatically.")
+    if len(ai_applications) == 1:
+        app = ai_applications[0]
+        save_ai_application(app["id"])
+        console.print(f"AI Application [bold]{app['name']}[/bold] selected automatically.")
         return
 
-    # Multiple workspaces — let the user pick
+    # Multiple AI applications — let the user pick
     console.print()
-    console.print("Select a workspace:")
-    for i, ws in enumerate(workspaces, 1):
-        console.print(f"  [bold]{i}[/bold]. {ws['name']} ({ws['id'][:8]}...)")
+    console.print("Select an AI application:")
+    for i, app in enumerate(ai_applications, 1):
+        console.print(f"  [bold]{i}[/bold]. {app['name']} ({app['id'][:8]}...)")
 
     console.print()
     while True:
-        choice = console.input(f"Enter number [1-{len(workspaces)}]: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(workspaces):
-            ws = workspaces[int(choice) - 1]
-            save_workspace(ws["id"])
-            console.print(f"Workspace [bold]{ws['name']}[/bold] selected.")
+        choice = console.input(f"Enter number [1-{len(ai_applications)}]: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(ai_applications):
+            app = ai_applications[int(choice) - 1]
+            save_ai_application(app["id"])
+            console.print(f"AI Application [bold]{app['name']}[/bold] selected.")
             return
         console.print("Invalid choice, try again.", style="red")
 
@@ -158,4 +163,4 @@ def _auto_select_workspace(endpoint: str, access_token: str) -> None:
 def logout() -> None:
     """Clear saved login credentials."""
     clear_token()
-    console.print("Logged out. Access token and workspace cleared.", style="green")
+    console.print("Logged out. Access token and AI application cleared.", style="green")

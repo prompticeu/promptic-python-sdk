@@ -26,17 +26,22 @@ PromptFormat = Literal["single", "multi_message"]
 PromptMessageRole = Literal["system", "user", "assistant"]
 
 
-# ── Workspace ────────────────────────────────────────────────────────
+# ── AI Application ────────────────────────────────────────────────────
 
 
-class Workspace(TypedDict):
-    """Workspace info returned by the API."""
+class AIApplication(TypedDict):
+    """AI Application info returned by the API."""
 
     id: str
     name: str
     description: str | None
     createdAt: str
     updatedAt: str
+
+
+# Deprecated alias — kept for backward compatibility. ``AIApplication`` is the
+# customer-facing name for the same object.
+Workspace = AIApplication
 
 
 # ── Components ───────────────────────────────────────────────────────
@@ -49,7 +54,7 @@ class Component(TypedDict):
     name: str
     description: str | None
     costAnalysisConfig: dict[str, Any] | None
-    workspaceId: str
+    aiApplicationId: str
     createdAt: str
     updatedAt: str
 
@@ -373,7 +378,7 @@ class TraceArtifact(TypedDict):
     """Artifact referenced from a trace or uploaded explicitly."""
 
     id: str
-    workspaceId: str
+    aiApplicationId: str
     traceDbId: str | None
     spanDbId: str | None
     traceId: str | None

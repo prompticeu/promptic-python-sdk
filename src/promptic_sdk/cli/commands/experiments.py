@@ -250,7 +250,7 @@ def _print_duplicated_experiment(result: Mapping[str, Any], *, source_id: str, k
     if result.get("modelUnavailable"):
         console.print(
             "[yellow]Warning:[/yellow] the source's target model is no longer "
-            "available in this workspace; update it before starting."
+            "available in this AI Application; update it before starting."
         )
 
 
