@@ -22,7 +22,7 @@ from promptic_sdk.models import (
     ComponentList,
     Dataset,
     DatasetList,
-    DatasetWithItems,
+    DatasetWithCases,
     DeployedPrompt,
     Deployment,
     DeploymentCreated,
@@ -509,8 +509,8 @@ class PrompticClient:
         """List datasets for an AI component."""
         return self._get(f"/components/{component_id}/datasets")
 
-    def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
-        """Get a dataset with its items."""
+    def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithCases:
+        """Get a dataset with its canonical cases."""
         return self._get(f"/components/{component_id}/datasets/{dataset_id}")
 
     def delete_dataset(self, component_id: str, dataset_id: str) -> None:
@@ -1069,8 +1069,8 @@ class AsyncPrompticClient:
         """List datasets for an AI component."""
         return await self._get(f"/components/{component_id}/datasets")
 
-    async def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
-        """Get a dataset with its items."""
+    async def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithCases:
+        """Get a dataset with its canonical cases."""
         return await self._get(f"/components/{component_id}/datasets/{dataset_id}")
 
     async def delete_dataset(self, component_id: str, dataset_id: str) -> None:

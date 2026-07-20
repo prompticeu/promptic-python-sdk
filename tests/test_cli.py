@@ -148,6 +148,48 @@ class TestTracesCommands:
             assert result.exit_code == 1
 
 
+class TestDatasetCommands:
+    def test_create_prints_canonical_id_example(self):
+        payload = {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "name": "Regression",
+            "caseCount": 0,
+        }
+        with _mock_config(), _mock_client("datasets", "create_dataset", payload):
+            result = runner.invoke(
+                app,
+                ["datasets", "create", "--component", "component-id", "--name", "Regression"],
+            )
+
+        assert result.exit_code == 0
+        assert "Cases: 0" in result.stdout
+        assert f"dataset_id='{payload['id']}'" in result.stdout
+
+    def test_get_prints_canonical_cases(self):
+        payload = {
+            "id": "dataset-id",
+            "name": "Regression",
+            "description": None,
+            "caseCount": 1,
+            "cases": [
+                {
+                    "traceDbId": "trace-id",
+                    "input": "question",
+                    "output": "answer",
+                }
+            ],
+        }
+        with _mock_config(), _mock_client("datasets", "get_dataset", payload):
+            result = runner.invoke(
+                app,
+                ["datasets", "get", "dataset-id", "--component", "component-id"],
+            )
+
+        assert result.exit_code == 0
+        assert "Cases: 1" in result.stdout
+        assert "question" in result.stdout
+
+
 class TestExperimentsCommands:
     def _new_exp_payload(self) -> dict:
         return {

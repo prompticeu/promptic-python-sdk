@@ -141,6 +141,23 @@ with promptic_sdk.ai_component("my-component"):
     ...
 ```
 
+To add traces to a dataset, pass the dataset's immutable UUID. Datasets are
+created explicitly in the dashboard, CLI, or API; tracing never creates one
+from a display name.
+
+```python
+with promptic_sdk.ai_component(
+    "my-component",
+    dataset_id="550e8400-e29b-41d4-a716-446655440000",
+    run="v1-baseline",
+):
+    agent.run(test_input)
+```
+
+Invalid dataset IDs and run contexts without a dataset ID fail immediately,
+before spans are created. The SDK emits the `promptic.dataset.id` OpenTelemetry
+attribute for server-side linkage.
+
 ### Tracing workflows with custom spans
 
 Most users don't need this. With the right `[extras]` installed, auto-instrumentation already

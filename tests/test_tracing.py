@@ -15,6 +15,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, Sp
 import promptic_sdk.tracing as tracing_module
 from promptic_sdk.tracing import (
     PROMPTIC_COMPONENT_ATTR,
+    PROMPTIC_DATASET_ID_ATTR,
     ArtifactReference,
     InstrumentorName,
     _ArtifactSanitizer,
@@ -24,9 +25,11 @@ from promptic_sdk.tracing import (
     _BodyTooLargeError,
     _ComponentAttributeProcessor,
     _current_component,
+    _current_dataset_id,
     _OTLPSpanExporter413Aware,
     ai_component,
     artifact,
+    dataset,
     init,
 )
 
@@ -1402,6 +1405,44 @@ class TestAiComponent:
         with ai_component("temp"):
             assert _current_component.get() == "temp"
         assert _current_component.get() is None
+
+    def test_sets_canonical_dataset_id_attribute(self):
+        tracer = trace.get_tracer("test")
+        dataset_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            ai_component("my-agent", dataset_id=dataset_id, run="baseline"),
+            tracer.start_as_current_span("test-span"),
+        ):
+            pass
+
+        attrs = dict(self.exported_spans[0].attributes)
+        assert attrs[PROMPTIC_DATASET_ID_ATTR] == dataset_id
+        assert attrs[tracing_module.PROMPTIC_RUN_ATTR] == "baseline"
+
+    def test_dataset_context_sets_and_resets_canonical_id(self):
+        dataset_id = "550e8400-e29b-41d4-a716-446655440000"
+        with dataset(dataset_id):
+            assert _current_dataset_id.get() == dataset_id
+        assert _current_dataset_id.get() is None
+
+    def test_invalid_dataset_id_fails_before_context_entry(self):
+        with (
+            pytest.raises(ValueError, match="dataset_id must be a valid UUID"),
+            ai_component("my-agent", dataset_id="eval-set"),
+        ):
+            pytest.fail("invalid dataset context should not be entered")
+
+    def test_run_without_dataset_id_fails_before_context_entry(self):
+        with (
+            pytest.raises(ValueError, match="run requires dataset_id"),
+            ai_component("my-agent", run="baseline"),
+        ):
+            pytest.fail("unlinked run context should not be entered")
+
+    def test_legacy_dataset_keyword_is_rejected(self):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'dataset'"):
+            ai_component("my-agent", dataset="eval-set")  # type: ignore[call-arg]
 
 
 class _InMemoryExporter(SpanExporter):

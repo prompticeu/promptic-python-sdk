@@ -400,17 +400,23 @@ class TraceArtifactList(TypedDict):
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
+DatasetKind = Literal["generic", "prompt_optimization", "trace", "mcp_tool_optimization"]
 
 
-class DatasetItem(TypedDict):
-    """Item in an agent dataset linking to a trace."""
+class DatasetCase(TypedDict):
+    """Canonical case in an agent dataset, optionally backed by a trace."""
 
     id: int
     datasetId: str
-    traceDbId: str
+    traceDbId: str | None
     input: str | None
     output: str | None
+    expected: str | None
     createdAt: str
+    traceId: str | None
+    traceName: str | None
+    traceStatus: str | None
+    traceDurationMs: int | None
 
 
 class Dataset(TypedDict):
@@ -418,19 +424,19 @@ class Dataset(TypedDict):
 
     id: str
     name: str
-    aiComponentId: str
+    kind: DatasetKind
+    aiComponentId: str | None
     workspaceId: str
     description: str | None
-    itemCount: int
-    traceCount: int
+    caseCount: int
     createdAt: str
     updatedAt: str
 
 
-class DatasetWithItems(Dataset):
-    """Dataset with its items."""
+class DatasetWithCases(Dataset):
+    """Dataset with its canonical cases."""
 
-    items: list[DatasetItem]
+    cases: list[DatasetCase]
 
 
 class DatasetList(TypedDict):
@@ -586,7 +592,7 @@ class JudgeResult(TypedDict):
     """Canonical per-(target, judge) row produced by an evaluation.
 
     Each row identifies its judge (``judgeKey`` / ``judgeName`` / ``backend``),
-    the concrete thing it scored via exactly one of ``datasetItemId``,
+    the concrete thing it scored via exactly one of ``datasetCaseId``,
     ``traceDbId``, ``annotationId``, or ``runId``, the verdict
     (``score`` / ``rating`` / ``rationale`` / ``evidence`` / ``analysisPayload``),
     and the immutable ``judgeSnapshot`` used to produce it. Re-runs of the
@@ -601,7 +607,7 @@ class JudgeResult(TypedDict):
     judgeName: str
     traceDbId: str | None
     traceOtlpId: str | None
-    datasetItemId: int | None
+    datasetCaseId: int | None
     annotationId: str | None
     runId: str | None
     score: float | None

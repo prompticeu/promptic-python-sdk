@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+## Breaking Changes
+
+- Dataset tracing now uses explicit dataset UUIDs. Pass `dataset_id=` to
+  `ai_component()` or a UUID to `dataset()`; the SDK emits
+  `promptic.dataset.id` and rejects invalid or unlinked run contexts before
+  spans are created.
+- Dataset API types and CLI output now use canonical cases (`caseCount`,
+  `cases`, and `datasetCaseId`) instead of legacy items.
+
 ## v0.16.0 (2026-05-28)
 
 ## Features
