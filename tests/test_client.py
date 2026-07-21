@@ -6,6 +6,37 @@ import pytest
 from promptic_sdk.client import AsyncPrompticClient, PrompticClient
 
 
+def _canonical_dataset_payload(*, include_cases: bool = False) -> dict:
+    payload = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "Regression",
+        "description": None,
+        "aiComponentId": "550e8400-e29b-41d4-a716-446655440001",
+        "aiApplicationId": "550e8400-e29b-41d4-a716-446655440002",
+        "caseCount": 1,
+        "createdAt": "2026-07-21T10:00:00Z",
+        "updatedAt": "2026-07-21T10:00:00Z",
+    }
+    if include_cases:
+        payload["cases"] = [
+            {
+                "id": 7,
+                "datasetId": payload["id"],
+                "idx": 0,
+                "inputPayload": {"question": "hello"},
+                "expectedPayload": {"answer": "world"},
+                "expectedKind": "structured",
+                "split": "eval",
+                "metadata": {},
+                "createdAt": "2026-07-21T10:00:00Z",
+                "updatedAt": "2026-07-21T10:00:00Z",
+                "traceReferences": [],
+                "artifactReferences": [],
+            }
+        ]
+    return payload
+
+
 class TestPrompticClient:
     def test_requires_api_key(self):
         with pytest.raises(ValueError, match="Authentication required"):
@@ -74,6 +105,31 @@ class TestPrompticClient:
 
             result = client.get_trace("abc123")
             assert result == response_data
+
+    def test_dataset_methods_return_canonical_payloads(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        dataset = _canonical_dataset_payload()
+        dataset_with_cases = _canonical_dataset_payload(include_cases=True)
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                if request.method == "POST":
+                    assert request.read() == b'{"name":"Regression"}'
+                    return httpx.Response(201, json=dataset)
+                if request.url.path.endswith(f"/datasets/{dataset['id']}"):
+                    return httpx.Response(200, json=dataset_with_cases)
+                return httpx.Response(200, json={"data": [dataset]})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert client.create_dataset(dataset["aiComponentId"], "Regression") == dataset
+            assert client.list_datasets(dataset["aiComponentId"]) == {"data": [dataset]}
+            assert client.get_dataset(dataset["aiComponentId"], dataset["id"]) == dataset_with_cases
 
     def test_get_artifact_content_follows_redirect(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
@@ -404,6 +460,24 @@ class TestAsyncPrompticClient:
 
             result = await client.get_stats(days_back=7)
             assert result == response_data
+
+    async def test_get_dataset_returns_canonical_payload(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        dataset = _canonical_dataset_payload(include_cases=True)
+
+        async with AsyncPrompticClient() as client:
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                assert request.url.path.endswith(f"/datasets/{dataset['id']}")
+                return httpx.Response(200, json=dataset)
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert await client.get_dataset(dataset["aiComponentId"], dataset["id"]) == dataset
 
     def test_strips_trailing_slash(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")

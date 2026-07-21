@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
@@ -15,6 +15,19 @@ from promptic_sdk.cli import get_client
 datasets_app = typer.Typer(help="Manage agent datasets.")
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _display_payload(value: object, preferred_key: str | None = None) -> str:
+    """Render canonical JSON payloads compactly for the terminal."""
+    if preferred_key and isinstance(value, dict):
+        preferred = cast(dict[str, object], value).get(preferred_key)
+        if isinstance(preferred, str):
+            return preferred
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 @datasets_app.command("create")
@@ -112,13 +125,18 @@ def get_dataset(
         case_table = Table()
         case_table.add_column("Trace ID", style="cyan")
         case_table.add_column("Input", max_width=40)
-        case_table.add_column("Output", max_width=40)
+        case_table.add_column("Expected", max_width=40)
 
         for dataset_case in cases:
+            trace_references = dataset_case["traceReferences"]
+            source_trace = next(
+                (reference for reference in trace_references if reference["role"] == "source"),
+                trace_references[0] if trace_references else None,
+            )
             case_table.add_row(
-                dataset_case["traceDbId"] or "-",
-                (dataset_case["input"] or "-")[:80],
-                (dataset_case["output"] or "-")[:80],
+                source_trace["traceDbId"] if source_trace else "-",
+                _display_payload(dataset_case["inputPayload"], "input")[:80],
+                _display_payload(dataset_case["expectedPayload"], "value")[:80],
             )
         console.print(case_table)
 

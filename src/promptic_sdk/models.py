@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired
+from typing import Any, Literal, NotRequired, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -400,34 +400,58 @@ class TraceArtifactList(TypedDict):
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
-DatasetKind = Literal["generic", "prompt_optimization", "trace"]
+JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 
 
-class DatasetCase(TypedDict):
-    """Canonical case in an agent dataset, optionally backed by a trace."""
+class DatasetCaseTraceReference(TypedDict):
+    """Trace evidence attached to a canonical dataset case."""
 
-    id: int
-    datasetId: str
-    traceDbId: str | None
-    input: str | None
-    output: str | None
-    expected: str | None
-    createdAt: str
+    id: str
+    traceDbId: str
+    role: str
+    jsonPath: str | None
+    source: str
     traceId: str | None
     traceName: str | None
     traceStatus: str | None
     traceDurationMs: int | None
 
 
+class DatasetCaseArtifactReference(TypedDict):
+    """Artifact evidence attached to a canonical dataset case."""
+
+    id: str
+    artifactId: str
+    role: str
+    jsonPath: str | None
+    source: str
+
+
+class DatasetCase(TypedDict):
+    """Canonical JSON case, optionally backed by trace or artifact evidence."""
+
+    id: int
+    datasetId: str
+    idx: int | None
+    inputPayload: dict[str, JSONValue]
+    expectedPayload: JSONValue
+    expectedKind: str | None
+    split: SplitType | None
+    metadata: dict[str, JSONValue]
+    createdAt: str
+    updatedAt: str
+    traceReferences: list[DatasetCaseTraceReference]
+    artifactReferences: list[DatasetCaseArtifactReference]
+
+
 class Dataset(TypedDict):
-    """Agent dataset record."""
+    """AI component-owned dataset record."""
 
     id: str
     name: str
-    kind: DatasetKind
-    aiComponentId: str | None
-    workspaceId: str
     description: str | None
+    aiComponentId: str
+    aiApplicationId: str
     caseCount: int
     createdAt: str
     updatedAt: str

@@ -173,9 +173,9 @@ class TestDatasetCommands:
             "caseCount": 1,
             "cases": [
                 {
-                    "traceDbId": "trace-id",
-                    "input": "question",
-                    "output": "answer",
+                    "inputPayload": {"input": "question"},
+                    "expectedPayload": {"value": "answer"},
+                    "traceReferences": [{"traceDbId": "trace-id", "role": "source"}],
                 }
             ],
         }
