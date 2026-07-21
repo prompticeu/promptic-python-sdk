@@ -400,7 +400,7 @@ class TraceArtifactList(TypedDict):
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
-DatasetKind = Literal["generic", "prompt_optimization", "trace", "mcp_tool_optimization"]
+DatasetKind = Literal["generic", "prompt_optimization", "trace"]
 
 
 class DatasetCase(TypedDict):
