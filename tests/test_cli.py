@@ -173,9 +173,11 @@ class TestDatasetCommands:
             "caseCount": 1,
             "cases": [
                 {
-                    "inputPayload": {"input": "question"},
+                    "inputPayload": {
+                        "input": "question",
+                        "trace": "promptictrace://550e8400-e29b-41d4-a716-446655440001",
+                    },
                     "expectedPayload": {"value": "answer"},
-                    "traceReferences": [{"traceDbId": "trace-id", "role": "source"}],
                 }
             ],
         }

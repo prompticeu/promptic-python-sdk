@@ -8,9 +8,10 @@
   `ai_component()` or a UUID to `dataset()`; the SDK emits
   `promptic.dataset.id` and rejects invalid or unlinked run contexts before
   spans are created.
-- Dataset API types and CLI output now use canonical JSON payloads and typed
-  trace/artifact references. Dataset responses expose `aiApplicationId` and no
-  longer expose the unreleased `kind` or internal `workspaceId` fields.
+- Dataset API types and CLI output now use canonical JSON payloads, including
+  resource URIs embedded directly in those payloads. Dataset responses expose
+  `aiApplicationId` and no longer expose the unreleased `kind` or internal
+  `workspaceId` fields.
 
 ## v0.16.0 (2026-05-28)
 

@@ -403,32 +403,8 @@ AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
 JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 
 
-class DatasetCaseTraceReference(TypedDict):
-    """Trace evidence attached to a canonical dataset case."""
-
-    id: str
-    traceDbId: str
-    role: str
-    jsonPath: str | None
-    source: str
-    traceId: str | None
-    traceName: str | None
-    traceStatus: str | None
-    traceDurationMs: int | None
-
-
-class DatasetCaseArtifactReference(TypedDict):
-    """Artifact evidence attached to a canonical dataset case."""
-
-    id: str
-    artifactId: str
-    role: str
-    jsonPath: str | None
-    source: str
-
-
 class DatasetCase(TypedDict):
-    """Canonical JSON case, optionally backed by trace or artifact evidence."""
+    """Canonical JSON case whose payloads may contain Promptic resource URIs."""
 
     id: int
     datasetId: str
@@ -440,8 +416,6 @@ class DatasetCase(TypedDict):
     metadata: dict[str, JSONValue]
     createdAt: str
     updatedAt: str
-    traceReferences: list[DatasetCaseTraceReference]
-    artifactReferences: list[DatasetCaseArtifactReference]
 
 
 class Dataset(TypedDict):

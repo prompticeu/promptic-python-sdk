@@ -30,8 +30,6 @@ def _canonical_dataset_payload(*, include_cases: bool = False) -> dict:
                 "metadata": {},
                 "createdAt": "2026-07-21T10:00:00Z",
                 "updatedAt": "2026-07-21T10:00:00Z",
-                "traceReferences": [],
-                "artifactReferences": [],
             }
         ]
     return payload

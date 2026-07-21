@@ -123,18 +123,11 @@ def get_dataset(
     if cases:
         console.print(f"\n[bold]Cases ({len(cases)}):[/bold]")
         case_table = Table()
-        case_table.add_column("Trace ID", style="cyan")
         case_table.add_column("Input", max_width=40)
         case_table.add_column("Expected", max_width=40)
 
         for dataset_case in cases:
-            trace_references = dataset_case["traceReferences"]
-            source_trace = next(
-                (reference for reference in trace_references if reference["role"] == "source"),
-                trace_references[0] if trace_references else None,
-            )
             case_table.add_row(
-                source_trace["traceDbId"] if source_trace else "-",
                 _display_payload(dataset_case["inputPayload"], "input")[:80],
                 _display_payload(dataset_case["expectedPayload"], "value")[:80],
             )
