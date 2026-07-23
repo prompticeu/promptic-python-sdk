@@ -26,7 +26,6 @@ def _canonical_dataset_payload(*, include_cases: bool = False) -> dict:
                 "idx": 0,
                 "inputPayload": {"question": "hello"},
                 "expectedPayload": {"answer": "world"},
-                "expectedKind": "structured",
                 "split": "eval",
                 "metadata": {},
                 "createdAt": "2026-07-21T10:00:00Z",

@@ -390,7 +390,6 @@ class DatasetCase(TypedDict):
     idx: int | None
     inputPayload: dict[str, JSONValue]
     expectedPayload: JSONValue
-    expectedKind: str | None
     split: SplitType | None
     metadata: dict[str, JSONValue]
     createdAt: str
@@ -408,7 +407,6 @@ class DatasetCaseCreate(DatasetCaseCreateRequired, total=False):
 
     idx: int | None
     expectedPayload: JSONValue
-    expectedKind: str | None
     split: SplitType | None
     metadata: dict[str, JSONValue]
 
@@ -419,7 +417,6 @@ class DatasetCaseUpdate(TypedDict, total=False):
     idx: int | None
     inputPayload: dict[str, JSONValue]
     expectedPayload: JSONValue
-    expectedKind: str | None
     split: SplitType | None
     metadata: dict[str, JSONValue]
 
