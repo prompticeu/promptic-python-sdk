@@ -82,6 +82,7 @@ class Experiment(TypedDict):
     """Experiment record."""
 
     id: str
+    datasetId: str
     name: str | None
     description: str | None
     targetModel: str
@@ -119,28 +120,6 @@ class ExperimentStarted(TypedDict):
 
     messageId: str
     status: str
-
-
-# ── Observations ─────────────────────────────────────────────────────
-
-
-class Observation(TypedDict):
-    """Observation record with one or more input variables and expected output."""
-
-    id: int
-    experimentId: str
-    idx: int
-    expected: str
-    variables: dict[str, Any]
-    split: SplitType
-    createdAt: str
-    updatedAt: str
-
-
-class ObservationList(TypedDict):
-    """Paginated list of observations."""
-
-    data: list[Observation]
 
 
 # ── Evaluators ───────────────────────────────────────────────────────
@@ -416,6 +395,39 @@ class DatasetCase(TypedDict):
     metadata: dict[str, JSONValue]
     createdAt: str
     updatedAt: str
+
+
+class DatasetCaseCreateRequired(TypedDict):
+    """Required fields for a canonical dataset case."""
+
+    inputPayload: dict[str, JSONValue]
+
+
+class DatasetCaseCreate(DatasetCaseCreateRequired, total=False):
+    """Fields accepted when creating a canonical dataset case."""
+
+    idx: int | None
+    expectedPayload: JSONValue
+    expectedKind: str | None
+    split: SplitType | None
+    metadata: dict[str, JSONValue]
+
+
+class DatasetCaseUpdate(TypedDict, total=False):
+    """Fields accepted when updating a canonical dataset case."""
+
+    idx: int | None
+    inputPayload: dict[str, JSONValue]
+    expectedPayload: JSONValue
+    expectedKind: str | None
+    split: SplitType | None
+    metadata: dict[str, JSONValue]
+
+
+class DatasetCaseList(TypedDict):
+    """List of canonical dataset cases."""
+
+    data: list[DatasetCase]
 
 
 class Dataset(TypedDict):
