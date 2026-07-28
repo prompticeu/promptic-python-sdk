@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired
+from typing import Any, Literal
 
 from typing_extensions import TypedDict
 
@@ -399,222 +399,60 @@ class TraceArtifactList(TypedDict):
 
 # ── Datasets ────────────────────────────────────────────────────────
 
-AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
+DatasetCaseSplit = Literal["train", "eval"]
 
 
-class DatasetItem(TypedDict):
-    """Item in an agent dataset linking to a trace."""
+class DatasetCase(TypedDict):
+    """Reusable structured case in a canonical dataset."""
 
     id: int
     datasetId: str
-    traceDbId: str
-    input: str | None
-    output: str | None
-    createdAt: str
-
-
-class Dataset(TypedDict):
-    """Agent dataset record."""
-
-    id: str
-    name: str
-    aiComponentId: str
-    workspaceId: str
-    description: str | None
-    itemCount: int
-    traceCount: int
+    sourceTraceId: str | None
+    idx: int | None
+    inputPayload: dict[str, Any]
+    expectedPayload: Any | None
+    split: DatasetCaseSplit | None
+    metadata: dict[str, Any]
     createdAt: str
     updatedAt: str
 
 
-class DatasetWithItems(Dataset):
-    """Dataset with its items."""
+class DatasetCaseInput(TypedDict, total=False):
+    """Fields accepted when creating or updating a dataset case."""
 
-    items: list[DatasetItem]
+    idx: int | None
+    inputPayload: dict[str, Any]
+    expectedPayload: Any | None
+    split: DatasetCaseSplit | None
+    metadata: dict[str, Any]
+
+
+class DatasetCaseList(TypedDict):
+    """List of canonical dataset cases."""
+
+    data: list[DatasetCase]
+
+
+class Dataset(TypedDict):
+    """Canonical dataset record."""
+
+    id: str
+    name: str
+    description: str | None
+    aiComponentId: str
+    aiApplicationId: str
+    caseCount: int
+    createdAt: str
+    updatedAt: str
+
+
+class DatasetWithCases(Dataset):
+    """Dataset with its reusable cases."""
+
+    cases: list[DatasetCase]
 
 
 class DatasetList(TypedDict):
     """List of datasets."""
 
     data: list[Dataset]
-
-
-# ── Runs ────────────────────────────────────────────────────────────
-
-AnnotationRating = Literal["positive", "negative"]
-
-
-class Run(TypedDict):
-    """Agent run record — traces grouped for a dataset."""
-
-    id: str
-    name: str | None
-    datasetId: str
-    aiComponentId: str
-    workspaceId: str
-    status: str
-    traceCount: int
-    createdAt: str
-    updatedAt: str
-
-
-class RunWithTraces(Run):
-    """Run with its linked traces."""
-
-    traces: list[TraceListItem]
-
-
-class RunList(TypedDict):
-    """List of runs."""
-
-    data: list[Run]
-
-
-# ── Annotations ─────────────────────────────────────────────────────
-
-
-class Annotation(TypedDict):
-    """Annotation record — per-trace human feedback within a run."""
-
-    id: str
-    runId: str
-    traceDbId: str
-    userId: str
-    rating: str | None
-    comment: str | None
-    createdAt: str
-    updatedAt: str
-
-
-class AnnotationList(TypedDict):
-    """List of annotations."""
-
-    data: list[Annotation]
-
-
-# ── Agent Evaluations ───────────────────────────────────────────────
-
-
-class InsightDetail(TypedDict, total=False):
-    """Detail fields for an insight (varies by type)."""
-
-    toolName: str
-    errorRate: float
-    tokensWasted: int
-    stepIndex: int
-    costPercentage: float
-    usageRate: float
-
-
-class Insight(TypedDict):
-    """A single evaluation insight."""
-
-    type: str
-    severity: str
-    title: str
-    description: str
-    frequency: float
-    affectedRunIds: list[str]
-    details: dict[str, Any]
-    suggestedFix: str | None
-
-
-class InsightResultMeta(TypedDict):
-    """Metadata for an insight result."""
-
-    totalRuns: int
-    totalTokens: int
-    totalCostUsd: float
-    averageDurationMs: float
-    errorRate: float
-    analyzedAt: str
-
-
-class InsightResult(TypedDict):
-    """Full insight result from an evaluation."""
-
-    insights: list[Insight]
-    meta: InsightResultMeta
-
-
-EvaluationSubject = Literal["output", "trajectory", "annotation"]
-EvaluationTargetType = Literal["trace", "run", "dataset"]
-JudgeBackendType = Literal["deterministic", "llm_judge", "agent_judge"]
-
-
-class AgentEvaluation(TypedDict):
-    """Agent evaluation record.
-
-    Evaluations are scoped by ``subject`` (what the judge looks at: output,
-    trajectory, or annotation) and anchored to a durable resource by
-    ``targetType`` (trace, run, or dataset). The anchor IDs follow the
-    target type: ``trace`` evaluations populate only ``traceDbId``;
-    ``dataset`` evaluations populate only ``datasetId``; ``run`` evaluations
-    populate both ``runId`` and ``datasetId`` (since a run belongs to a
-    dataset).
-
-    The four scoping fields (``subject``, ``targetType``, ``traceDbId``,
-    ``budget``) are wrapped in ``NotRequired`` so evaluations created before
-    the scoped-evaluation migration still type-check — every other field
-    remains required because the API always returns it.
-    """
-
-    id: str
-    name: str | None
-    aiComponentId: str
-    datasetId: str | None
-    runId: str | None
-    status: AgentEvaluationStatus
-    results: InsightResult | None
-    startedAt: str | None
-    completedAt: str | None
-    createdAt: str
-    updatedAt: str
-    subject: NotRequired[EvaluationSubject]
-    targetType: NotRequired[EvaluationTargetType]
-    traceDbId: NotRequired[str | None]
-    budget: NotRequired[dict[str, Any] | None]
-
-
-class AgentEvaluationList(TypedDict):
-    """List of agent evaluations."""
-
-    data: list[AgentEvaluation]
-
-
-class JudgeResult(TypedDict):
-    """Canonical per-(target, judge) row produced by an evaluation.
-
-    Each row identifies its judge (``judgeKey`` / ``judgeName`` / ``backend``),
-    the concrete thing it scored via exactly one of ``datasetItemId``,
-    ``traceDbId``, ``annotationId``, or ``runId``, the verdict
-    (``score`` / ``rating`` / ``rationale`` / ``evidence`` / ``analysisPayload``),
-    and the immutable ``judgeSnapshot`` used to produce it. Re-runs of the
-    same ``(evaluation, target, judgeKey)`` are versioned via ``version``.
-    """
-
-    id: str
-    evaluationId: str
-    subject: EvaluationSubject
-    backend: JudgeBackendType
-    judgeKey: str
-    judgeName: str
-    traceDbId: str | None
-    traceOtlpId: str | None
-    datasetItemId: int | None
-    annotationId: str | None
-    runId: str | None
-    score: float | None
-    rating: str | None
-    rationale: str | None
-    evidence: Any
-    analysisPayload: Any
-    judgeSnapshot: dict[str, Any]
-    version: int
-    createdAt: str
-
-
-class JudgeResultList(TypedDict):
-    """Response wrapper for ``list_judge_results``."""
-
-    rows: list[JudgeResult]

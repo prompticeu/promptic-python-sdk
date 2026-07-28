@@ -102,7 +102,6 @@ Features
 ## v0.11.0 (2026-04-08)
 
 ## Features
-- CLI now requires the --run flag for evaluations, ensuring clearer and more explicit command usage.
 
 ## v0.10.1 (2026-03-18)
 

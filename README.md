@@ -293,16 +293,6 @@ promptic [command] [subcommand] [options]
 | `promptic datasets list`               | List datasets                          |
 | `promptic datasets get <id>`           | Get dataset details                    |
 | `promptic datasets delete <id>`        | Delete a dataset                       |
-| `promptic runs create`                 | Create a run                           |
-| `promptic runs list`                   | List runs                              |
-| `promptic runs get <id>`               | Get run details                        |
-| `promptic runs delete <id>`            | Delete a run                           |
-| `promptic annotations create`          | Create an annotation                   |
-| `promptic annotations list`            | List annotations                       |
-| `promptic annotations delete <id>`     | Delete an annotation                   |
-| `promptic evaluations run`             | Run an evaluation                      |
-| `promptic evaluations list`            | List evaluations                       |
-| `promptic evaluations get <id>`        | Get evaluation details                 |
 
 All list commands support `--json` for machine-readable output.
 

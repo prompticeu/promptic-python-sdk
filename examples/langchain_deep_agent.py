@@ -170,7 +170,7 @@ test_queries = [
     "Plan me a weekend in Paris flying from London. I'd budget about $100/day for food and activities.",
 ]
 
-with promptic_sdk.ai_component("travel-planner", dataset="travel-queries", run="optimized"):
+with promptic_sdk.ai_component("travel-planner"):
     for query in test_queries:
         print(f"User: {query}")
         result = agent.invoke({"messages": [("user", query)]})
