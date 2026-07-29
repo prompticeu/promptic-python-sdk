@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## Features
+
+- Added typed synchronous and asynchronous clients for revision-bound Agent
+  Gym external submissions, including manifest materialization, verified
+  output artifacts, trace linkage, finalization, leaderboard status polling,
+  and cancellation.
+
 ## Breaking Changes
 
 - Dataset tracing now uses explicit dataset UUIDs. Pass `dataset_id=` to

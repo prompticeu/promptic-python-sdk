@@ -260,6 +260,48 @@ Both clients provide typed methods for the full Promptic REST API:
 
 The client reads `PROMPTIC_API_KEY` and `PROMPTIC_ENDPOINT` from the environment, or accepts them as constructor arguments.
 
+## Agent Gym external submissions
+
+`AgentGymClient` and `AsyncAgentGymClient` run revision-bound benchmark
+submissions from infrastructure you control. They use a benchmark-scoped
+`ags_` token, not the normal API client credentials:
+
+```python
+from promptic_sdk import AgentGymClient
+
+with AgentGymClient(submission_token="ags_...", endpoint="https://promptic.eu") as client:
+    session = client.start_submission(
+        benchmark_id="11111111-1111-4111-8111-111111111111",
+        idempotency_key="ci-build-123:create",
+    )
+    for case in session.iter_cases():
+        # case["case_id"] is the revision_case_id required by finalize.
+        run_candidate(case)
+```
+
+The clients expose lower-level methods for every submission endpoint and bound
+session helpers for manifest pagination/materialization, submission-specific
+artifact reserve/upload/complete, OTEL trace resolution, finalization, status
+polling, and cancellation. Output files must use these submission artifact
+methods; generic trace artifacts are separate execution evidence.
+
+A submission token with `trace:write` can also be passed to
+`promptic_sdk.init(api_key=token)`. Flush exported spans, resolve their raw
+32-hex OTEL IDs through `session.wait_for_resolved_traces()`, and put the
+returned trace database UUIDs in each prediction's
+`execution_refs.trace_ids`.
+
+The submission token authenticates OTLP trace ingestion and trace resolution.
+The platform does not currently expose a submission-scoped trace-artifact
+creation endpoint, so `trace_artifact_ids` can only reference trace artifacts
+that already exist in the same AI Application. Prediction output files always
+use the submission artifact workflow.
+
+See
+[`examples/agent_gym_external_submission.py`](examples/agent_gym_external_submission.py)
+for a complete local runner that materializes cases, produces HTML artifacts,
+uploads them, links traces, finalizes, and waits for leaderboard scoring.
+
 ## CLI
 
 The `promptic` CLI mirrors the API client and supports both human-readable tables and `--json` output.
