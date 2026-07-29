@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, cast
 from uuid import UUID
 
 import httpx
@@ -39,6 +39,9 @@ from promptic_sdk.agent_gym_models import (
 )
 from promptic_sdk.client import PrompticAPIError
 
+if TYPE_CHECKING:
+    from promptic_sdk.agent_gym_runner import AgentGymRunResult, AsyncCandidate, Candidate
+
 _DEFAULT_ENDPOINT = "https://promptic.eu"
 _MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 _MAX_TRACE_IDS = 100
@@ -49,6 +52,83 @@ _TERMINAL_SUBMISSION_STATUSES = {"succeeded", "failed", "expired", "cancelled"}
 _UNSET = object()
 
 RequestParams: TypeAlias = Mapping[str, Any] | Sequence[tuple[str, Any]]
+
+
+@dataclass(frozen=True)
+class _AgentGymCredentials:
+    bearer_token: str = field(repr=False)
+    ai_application_id: str | None
+    is_runner_key: bool
+
+
+def _resolve_agent_gym_credentials(
+    *,
+    submission_token: str | None,
+    runner_token: str | None,
+    api_key: str | None,
+    access_token: str | None,
+    ai_application_id: str | None,
+) -> _AgentGymCredentials:
+    explicit_runner_token = runner_token or submission_token
+    environment_runner_token = os.environ.get("PROMPTIC_AGENT_GYM_TOKEN")
+    resolved_api_key = api_key
+    resolved_access_token = access_token
+    resolved_ai_application_id = (
+        ai_application_id
+        or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+        or os.environ.get("PROMPTIC_WORKSPACE_ID")
+    )
+
+    if explicit_runner_token:
+        if not explicit_runner_token.startswith("ags_"):
+            raise ValueError("Agent Gym runner tokens must start with 'ags_'")
+        return _AgentGymCredentials(
+            bearer_token=explicit_runner_token,
+            ai_application_id=None,
+            is_runner_key=True,
+        )
+
+    resolved_access_token = resolved_access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
+    resolved_api_key = resolved_api_key or os.environ.get("PROMPTIC_API_KEY")
+    if not resolved_api_key and not resolved_access_token and environment_runner_token:
+        if not environment_runner_token.startswith("ags_"):
+            raise ValueError("Agent Gym runner tokens must start with 'ags_'")
+        return _AgentGymCredentials(
+            bearer_token=environment_runner_token,
+            ai_application_id=None,
+            is_runner_key=True,
+        )
+
+    if not resolved_api_key and not resolved_access_token:
+        try:
+            from promptic_sdk.cli.config import load_config
+
+            config = load_config()
+        except Exception:  # noqa: BLE001
+            config = None
+        if config is not None:
+            resolved_api_key = config.api_key
+            resolved_access_token = config.access_token
+            resolved_ai_application_id = resolved_ai_application_id or config.workspace_id
+
+    bearer_token = resolved_access_token if resolved_access_token else resolved_api_key
+    if not bearer_token:
+        raise ValueError(
+            "Promptic authentication required. Run 'promptic login', pass api_key= or "
+            "access_token=, or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN. "
+            "PROMPTIC_AGENT_GYM_TOKEN is only needed for an optional scoped runner key."
+        )
+    if resolved_access_token and not resolved_ai_application_id:
+        raise ValueError(
+            "ai_application_id is required with login access tokens. Run 'promptic login' "
+            "to select an AI Application, pass ai_application_id=, or set "
+            "PROMPTIC_AI_APPLICATION_ID."
+        )
+    return _AgentGymCredentials(
+        bearer_token=bearer_token,
+        ai_application_id=resolved_ai_application_id,
+        is_runner_key=False,
+    )
 
 
 class AgentGymAPIError(PrompticAPIError):
@@ -521,30 +601,43 @@ def _validate_manifest_page_identity(first: ManifestPage, page: ManifestPage) ->
 
 @dataclass
 class AgentGymClient:
-    """Synchronous client authenticated by an ``ags_`` submission token."""
+    """Synchronous Agent Gym client using normal Promptic authentication by default.
+
+    A scoped ``ags_`` runner key remains available for CI or remote runners that
+    should not receive a normal Promptic credential.
+    """
 
     submission_token: str | None = field(default=None, repr=False)
     endpoint: str | None = None
     timeout: float = 30.0
+    api_key: str | None = field(default=None, repr=False)
+    access_token: str | None = field(default=None, repr=False)
+    ai_application_id: str | None = None
+    runner_token: str | None = field(default=None, repr=False)
     _client: httpx.Client = field(init=False, repr=False)
     _direct_client: httpx.Client = field(init=False, repr=False)
+    _uses_runner_key: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize authenticated API and unauthenticated direct-transfer clients."""
-        self.submission_token = self.submission_token or os.environ.get("PROMPTIC_AGENT_GYM_TOKEN")
-        if not self.submission_token:
-            raise ValueError(
-                "Agent Gym submission token required. Pass submission_token= or set "
-                "PROMPTIC_AGENT_GYM_TOKEN."
-            )
-        if not self.submission_token.startswith("ags_"):
-            raise ValueError("Agent Gym submission tokens must start with 'ags_'")
+        credentials = _resolve_agent_gym_credentials(
+            submission_token=self.submission_token,
+            runner_token=self.runner_token,
+            api_key=self.api_key,
+            access_token=self.access_token,
+            ai_application_id=self.ai_application_id,
+        )
+        self._uses_runner_key = credentials.is_runner_key
+        self.ai_application_id = credentials.ai_application_id
         self.endpoint = (
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
+        auth_headers = {"Authorization": f"Bearer {credentials.bearer_token}"}
+        if credentials.ai_application_id:
+            auth_headers["X-AI-Application-Id"] = credentials.ai_application_id
         self._client = httpx.Client(
             base_url=f"{self.endpoint}/api/v1",
-            headers={"Authorization": f"Bearer {self.submission_token}"},
+            headers=auth_headers,
             timeout=self.timeout,
         )
         self._direct_client = httpx.Client(timeout=self.timeout, follow_redirects=True)
@@ -1028,6 +1121,49 @@ class AgentGymClient:
             f"/benchmarks/{benchmark_id}/submissions/{submission_id}",
         )
 
+    def submit(
+        self,
+        benchmark_id: str,
+        candidate: Candidate,
+        *,
+        name: str,
+        version: str,
+        architecture_description: str | None = None,
+        revision_id: str | None = None,
+        bundle_identity: BundleIdentity | None = None,
+        metadata: dict[str, Any] | None = None,
+        workdir: str | os.PathLike[str] | None = None,
+        idempotency_key: str | None = None,
+        capture_exceptions: bool = True,
+        wait: bool = True,
+        max_wait: float = 600,
+        poll_interval: float = 2,
+        trace_max_wait: float = 30,
+        trace_poll_interval: float = 0.5,
+    ) -> AgentGymRunResult:
+        """Run a trusted candidate over every frozen case and submit it for scoring."""
+        from promptic_sdk.agent_gym_runner import submit_benchmark
+
+        return submit_benchmark(
+            self,
+            benchmark_id,
+            candidate,
+            name=name,
+            version=version,
+            architecture_description=architecture_description,
+            revision_id=revision_id,
+            bundle_identity=bundle_identity,
+            metadata=metadata,
+            workdir=Path(workdir) if workdir is not None else None,
+            idempotency_key=idempotency_key,
+            capture_exceptions=capture_exceptions,
+            wait=wait,
+            max_wait=max_wait,
+            poll_interval=poll_interval,
+            trace_max_wait=trace_max_wait,
+            trace_poll_interval=trace_poll_interval,
+        )
+
     def close(self) -> None:
         """Close API and direct-transfer HTTP clients."""
         self._client.close()
@@ -1191,30 +1327,39 @@ class ExternalSubmissionSession:
 
 @dataclass
 class AsyncAgentGymClient:
-    """Asynchronous client authenticated by an ``ags_`` submission token."""
+    """Asynchronous Agent Gym client using normal Promptic authentication by default."""
 
     submission_token: str | None = field(default=None, repr=False)
     endpoint: str | None = None
     timeout: float = 30.0
+    api_key: str | None = field(default=None, repr=False)
+    access_token: str | None = field(default=None, repr=False)
+    ai_application_id: str | None = None
+    runner_token: str | None = field(default=None, repr=False)
     _client: httpx.AsyncClient = field(init=False, repr=False)
     _direct_client: httpx.AsyncClient = field(init=False, repr=False)
+    _uses_runner_key: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize authenticated API and unauthenticated direct-transfer clients."""
-        self.submission_token = self.submission_token or os.environ.get("PROMPTIC_AGENT_GYM_TOKEN")
-        if not self.submission_token:
-            raise ValueError(
-                "Agent Gym submission token required. Pass submission_token= or set "
-                "PROMPTIC_AGENT_GYM_TOKEN."
-            )
-        if not self.submission_token.startswith("ags_"):
-            raise ValueError("Agent Gym submission tokens must start with 'ags_'")
+        credentials = _resolve_agent_gym_credentials(
+            submission_token=self.submission_token,
+            runner_token=self.runner_token,
+            api_key=self.api_key,
+            access_token=self.access_token,
+            ai_application_id=self.ai_application_id,
+        )
+        self._uses_runner_key = credentials.is_runner_key
+        self.ai_application_id = credentials.ai_application_id
         self.endpoint = (
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
         ).rstrip("/")
+        auth_headers = {"Authorization": f"Bearer {credentials.bearer_token}"}
+        if credentials.ai_application_id:
+            auth_headers["X-AI-Application-Id"] = credentials.ai_application_id
         self._client = httpx.AsyncClient(
             base_url=f"{self.endpoint}/api/v1",
-            headers={"Authorization": f"Bearer {self.submission_token}"},
+            headers=auth_headers,
             timeout=self.timeout,
         )
         self._direct_client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
@@ -1712,6 +1857,49 @@ class AsyncAgentGymClient:
         return await self._request(
             "DELETE",
             f"/benchmarks/{benchmark_id}/submissions/{submission_id}",
+        )
+
+    async def submit(
+        self,
+        benchmark_id: str,
+        candidate: AsyncCandidate,
+        *,
+        name: str,
+        version: str,
+        architecture_description: str | None = None,
+        revision_id: str | None = None,
+        bundle_identity: BundleIdentity | None = None,
+        metadata: dict[str, Any] | None = None,
+        workdir: str | os.PathLike[str] | None = None,
+        idempotency_key: str | None = None,
+        capture_exceptions: bool = True,
+        wait: bool = True,
+        max_wait: float = 600,
+        poll_interval: float = 2,
+        trace_max_wait: float = 30,
+        trace_poll_interval: float = 0.5,
+    ) -> AgentGymRunResult:
+        """Run a trusted candidate over every frozen case and submit it for scoring."""
+        from promptic_sdk.agent_gym_runner import submit_benchmark_async
+
+        return await submit_benchmark_async(
+            self,
+            benchmark_id,
+            candidate,
+            name=name,
+            version=version,
+            architecture_description=architecture_description,
+            revision_id=revision_id,
+            bundle_identity=bundle_identity,
+            metadata=metadata,
+            workdir=Path(workdir) if workdir is not None else None,
+            idempotency_key=idempotency_key,
+            capture_exceptions=capture_exceptions,
+            wait=wait,
+            max_wait=max_wait,
+            poll_interval=poll_interval,
+            trace_max_wait=trace_max_wait,
+            trace_poll_interval=trace_poll_interval,
         )
 
     async def close(self) -> None:

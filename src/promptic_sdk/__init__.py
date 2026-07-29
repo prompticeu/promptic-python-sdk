@@ -44,6 +44,12 @@ from promptic_sdk.agent_gym_models import (
     TraceResolution,
     TraceResolutionList,
 )
+from promptic_sdk.agent_gym_runner import (
+    AgentGymCase,
+    AgentGymCaseResult,
+    AgentGymOutputArtifact,
+    AgentGymRunResult,
+)
 from promptic_sdk.client import AsyncPrompticClient, PrompticAPIError, PrompticClient
 from promptic_sdk.models import (
     AgentEvaluation,
@@ -111,7 +117,11 @@ from promptic_sdk.tracing import (
 __version__ = "0.16.0"
 __all__ = [
     "AgentGymAPIError",
+    "AgentGymCase",
+    "AgentGymCaseResult",
     "AgentGymClient",
+    "AgentGymOutputArtifact",
+    "AgentGymRunResult",
     "ArtifactIntegrityError",
     "ArtifactUploadError",
     "AsyncAgentGymClient",

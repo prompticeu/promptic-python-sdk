@@ -172,6 +172,52 @@ def _async_client(
 
 
 class TestAgentGymClient:
+    def test_normal_api_key_is_the_default_authentication_path(self):
+        client = AgentGymClient(
+            api_key="promptic-api-key",
+            endpoint="https://promptic.example",
+        )
+        try:
+            assert client._client.headers["authorization"] == "Bearer promptic-api-key"
+            assert "x-ai-application-id" not in client._client.headers
+        finally:
+            client.close()
+
+    def test_login_token_includes_the_selected_ai_application(self):
+        client = AgentGymClient(
+            access_token="login-token",  # noqa: S106 - synthetic credential
+            ai_application_id="application-1",
+            endpoint="https://promptic.example",
+        )
+        try:
+            assert client._client.headers["authorization"] == "Bearer login-token"
+            assert client._client.headers["x-ai-application-id"] == "application-1"
+        finally:
+            client.close()
+
+    def test_runner_key_remains_an_optional_scoped_authentication_path(self):
+        client = AgentGymClient(
+            runner_token=TOKEN,
+            endpoint="https://promptic.example",
+        )
+        try:
+            assert client._client.headers["authorization"] == f"Bearer {TOKEN}"
+            assert client._uses_runner_key is True
+        finally:
+            client.close()
+
+    def test_explicit_api_key_takes_precedence_over_runner_key_env(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_AGENT_GYM_TOKEN", TOKEN)
+        client = AgentGymClient(
+            api_key="promptic-api-key",
+            endpoint="https://promptic.example",
+        )
+        try:
+            assert client._client.headers["authorization"] == "Bearer promptic-api-key"
+            assert client._uses_runner_key is False
+        finally:
+            client.close()
+
     def test_full_external_submission_happy_path(self, tmp_path: Path):
         api_requests: list[httpx.Request] = []
         direct_requests: list[httpx.Request] = []

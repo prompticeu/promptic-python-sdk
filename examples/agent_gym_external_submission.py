@@ -1,7 +1,7 @@
-"""Run a local candidate against an Agent Gym manifest and submit its results.
+"""Advanced low-level runner using an optional benchmark-scoped runner key.
 
 Required environment variables:
-    PROMPTIC_AGENT_GYM_TOKEN: Benchmark-scoped ``ags_`` submission credential.
+    PROMPTIC_AGENT_GYM_TOKEN: Benchmark-scoped ``ags_`` runner credential.
     PROMPTIC_BENCHMARK_ID: Benchmark dataset UUID.
 
 Optional environment variables:
@@ -55,7 +55,7 @@ def main() -> None:
     run_key = f"local-{uuid4()}"
     workdir = Path(".promptic-agent-gym") / run_key
 
-    # The scoped submission token can ingest OTLP traces when it has trace:write.
+    # The scoped runner key can ingest OTLP traces when it has trace:write.
     # Do not call promptic_sdk.artifact() for prediction outputs; use the
     # submission-specific artifact methods below.
     promptic_sdk.init(

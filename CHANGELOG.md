@@ -8,6 +8,9 @@
   Gym external submissions, including manifest materialization, verified
   output artifacts, trace linkage, finalization, leaderboard status polling,
   and cancellation.
+- Added high-level `submit()` helpers and `promptic gym run`. Agent Gym now
+  uses normal saved login or API-key authentication by default; scoped runner
+  keys remain optional for CI and remote runtimes.
 
 ## Breaking Changes
 

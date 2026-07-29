@@ -16,6 +16,7 @@ from promptic_sdk.cli.commands.deployments import deployments_app
 from promptic_sdk.cli.commands.evaluations import evaluations_app
 from promptic_sdk.cli.commands.evaluators import evaluators_app
 from promptic_sdk.cli.commands.experiments import experiments_app
+from promptic_sdk.cli.commands.gym import gym_app
 from promptic_sdk.cli.commands.iterations import iterations_app
 from promptic_sdk.cli.commands.login import login, logout
 from promptic_sdk.cli.commands.runs import runs_app
@@ -43,6 +44,7 @@ app.add_typer(datasets_app, name="datasets")
 app.add_typer(runs_app, name="runs")
 app.add_typer(annotations_app, name="annotations")
 app.add_typer(evaluations_app, name="evaluations")
+app.add_typer(gym_app, name="gym")
 
 _err_console = Console(stderr=True)
 

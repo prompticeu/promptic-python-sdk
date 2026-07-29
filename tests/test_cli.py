@@ -192,6 +192,67 @@ class TestDatasetCommands:
         assert "question" in result.stdout
 
 
+class TestGymCommands:
+    def test_run_submits_a_python_callback_with_saved_authentication(self):
+        candidate = MagicMock()
+        submission_result = MagicMock(
+            submission_id="submission-1",
+            revision_id="revision-1",
+            run_id="run-1",
+            bundle_id="bundle-1",
+            status={
+                "status": "succeeded",
+                "run": {
+                    "scoring_status": "succeeded",
+                    "eligibility_status": "eligible",
+                },
+            },
+        )
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.submit.return_value = submission_result
+
+        with (
+            patch(
+                "promptic_sdk.cli.commands.gym._load_candidate",
+                return_value=candidate,
+            ),
+            patch(
+                "promptic_sdk.cli.commands.gym.AgentGymClient",
+                return_value=client,
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "gym",
+                    "run",
+                    "11111111-1111-4111-8111-111111111111",
+                    "my_agent:run",
+                    "--name",
+                    "my-agent",
+                    "--version",
+                    "1.0.0",
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["run_id"] == "run-1"
+        client.submit.assert_called_once_with(
+            "11111111-1111-4111-8111-111111111111",
+            candidate,
+            name="my-agent",
+            version="1.0.0",
+            architecture_description=None,
+            revision_id=None,
+            workdir=None,
+            idempotency_key=None,
+            wait=True,
+        )
+
+
 class TestExperimentsCommands:
     def _new_exp_payload(self) -> dict:
         return {

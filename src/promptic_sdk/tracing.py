@@ -153,6 +153,50 @@ _MEDIA_PATH_MARKERS = (
 
 _configured_api_key: str | None = None
 _configured_endpoint: str | None = None
+_configured_ai_application_id: str | None = None
+
+
+def _resolve_tracing_credentials(
+    *,
+    api_key: str | None,
+    access_token: str | None,
+    ai_application_id: str | None,
+) -> tuple[str, str | None]:
+    resolved_api_key = api_key
+    resolved_access_token = access_token
+    resolved_ai_application_id = (
+        ai_application_id
+        or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+        or os.environ.get("PROMPTIC_WORKSPACE_ID")
+    )
+    if not resolved_api_key and not resolved_access_token:
+        resolved_access_token = os.environ.get("PROMPTIC_ACCESS_TOKEN")
+        resolved_api_key = os.environ.get("PROMPTIC_API_KEY")
+    if not resolved_api_key and not resolved_access_token:
+        try:
+            from promptic_sdk.cli.config import load_config
+
+            config = load_config()
+        except Exception:  # noqa: BLE001
+            config = None
+        if config is not None:
+            resolved_api_key = config.api_key
+            resolved_access_token = config.access_token
+            resolved_ai_application_id = resolved_ai_application_id or config.workspace_id
+
+    token = resolved_access_token or resolved_api_key
+    if not token:
+        raise ValueError(
+            "Promptic authentication required. Run 'promptic login', pass api_key= or "
+            "access_token=, or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN."
+        )
+    if resolved_access_token and not resolved_ai_application_id:
+        raise ValueError(
+            "ai_application_id is required with login access tokens. Run 'promptic login' "
+            "to select an AI Application, pass ai_application_id=, or set "
+            "PROMPTIC_AI_APPLICATION_ID."
+        )
+    return token, resolved_ai_application_id
 
 
 def _split_instrumentor_env(value: str | None) -> list[str] | None:
@@ -290,9 +334,18 @@ class ArtifactReference:
 class _ArtifactUploader:
     """Synchronous artifact uploader used by exporter and public helper."""
 
-    def __init__(self, *, endpoint: str, api_key: str) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        api_key: str,
+        ai_application_id: str | None = None,
+    ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
+        self._auth_headers = {"Authorization": f"Bearer {api_key}"}
+        if ai_application_id:
+            self._auth_headers["X-AI-Application-Id"] = ai_application_id
 
     def _direct_upload(
         self,
@@ -312,7 +365,7 @@ class _ArtifactUploader:
         try:
             presign_response = client.post(
                 f"{self._endpoint}/api/v1/storage-objects/presign",
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=self._auth_headers,
                 json={
                     "folder": "trace-artifacts",
                     "filename": filename,
@@ -357,7 +410,7 @@ class _ArtifactUploader:
 
         register_response = client.post(
             f"{self._endpoint}/api/v1/artifacts",
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            headers=self._auth_headers,
             json={
                 "storageObjectId": storage_object_id,
                 "mimeType": mime_type,
@@ -412,7 +465,7 @@ class _ArtifactUploader:
                 if data is None:
                     response = client.post(
                         f"{self._endpoint}/api/v1/artifacts",
-                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        headers=self._auth_headers,
                         json={
                             "contentBase64": base64.b64encode(content).decode("ascii"),
                             "mimeType": mime_type,
@@ -537,13 +590,20 @@ def _looks_like_path(value: str) -> bool:
     return bool(_FILENAME_LIKE_RE.match(_source_path_name(stripped)))
 
 
-def _configure_artifacts_once(*, api_key: str, endpoint: str) -> None:
-    global _configured_api_key, _configured_endpoint
+def _configure_artifacts_once(
+    *,
+    api_key: str,
+    endpoint: str,
+    ai_application_id: str | None = None,
+) -> None:
+    global _configured_ai_application_id, _configured_api_key, _configured_endpoint
 
     if _configured_api_key is None:
         _configured_api_key = api_key
     if _configured_endpoint is None:
         _configured_endpoint = endpoint
+    if _configured_ai_application_id is None:
+        _configured_ai_application_id = ai_application_id
 
 
 class _ArtifactUploadBackend(Protocol):
@@ -694,9 +754,22 @@ class _ArtifactSanitizer:
 class _ArtifactRewritingExporter(SpanExporter):
     """Uploads large inline media/file payloads and replaces them with refs."""
 
-    def __init__(self, inner: SpanExporter, *, endpoint: str, api_key: str) -> None:
+    def __init__(
+        self,
+        inner: SpanExporter,
+        *,
+        endpoint: str,
+        api_key: str,
+        ai_application_id: str | None = None,
+    ) -> None:
         self._inner = inner
-        self._sanitizer = _ArtifactSanitizer(_ArtifactUploader(endpoint=endpoint, api_key=api_key))
+        self._sanitizer = _ArtifactSanitizer(
+            _ArtifactUploader(
+                endpoint=endpoint,
+                api_key=api_key,
+                ai_application_id=ai_application_id,
+            )
+        )
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         sanitized = [self._sanitizer.sanitize_span(span) for span in spans]
@@ -810,6 +883,8 @@ def artifact(
     *,
     mime_type: str | None = None,
     api_key: str | None = None,
+    access_token: str | None = None,
+    ai_application_id: str | None = None,
     endpoint: str | None = None,
 ) -> ArtifactReference:
     """Upload a local file or bytes and return a trace-safe artifact reference.
@@ -822,10 +897,11 @@ def artifact(
         ref = promptic_sdk.artifact("report.pdf")
         span.set_attribute("retrieval.input_file", ref.ref)
     """
-    resolved_api_key = api_key or _configured_api_key or os.environ.get("PROMPTIC_API_KEY")
-    if not resolved_api_key:
-        msg = "Promptic API key is required to upload artifacts."
-        raise ValueError(msg)
+    resolved_api_key, resolved_ai_application_id = _resolve_tracing_credentials(
+        api_key=api_key or _configured_api_key,
+        access_token=access_token,
+        ai_application_id=ai_application_id or _configured_ai_application_id,
+    )
 
     resolved_endpoint = (
         endpoint or _configured_endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
@@ -856,7 +932,11 @@ def artifact(
         msg = "artifact() expects a path, bytes, or text string."
         raise TypeError(msg)
 
-    ref = _ArtifactUploader(endpoint=resolved_endpoint, api_key=resolved_api_key).upload(
+    ref = _ArtifactUploader(
+        endpoint=resolved_endpoint,
+        api_key=resolved_api_key,
+        ai_application_id=resolved_ai_application_id,
+    ).upload(
         content,
         mime_type=resolved_mime_type,
         source_path=source_path,
@@ -874,6 +954,8 @@ def artifact(
 def init(
     *,
     api_key: str | None = None,
+    access_token: str | None = None,
+    ai_application_id: str | None = None,
     endpoint: str | None = None,
     auto_instrument: bool = True,
     instrumentors: InstrumentorSelection | None = None,
@@ -884,6 +966,11 @@ def init(
 
     Args:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
+        access_token: Token saved by ``promptic login``. Falls back to
+            ``PROMPTIC_ACCESS_TOKEN`` or the CLI configuration.
+        ai_application_id: AI Application used with login access tokens. Falls back
+            to ``PROMPTIC_AI_APPLICATION_ID``, ``PROMPTIC_WORKSPACE_ID``, or the CLI
+            configuration.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
             then to ``https://promptic.eu``.
         auto_instrument: If True, auto-detect installed LLM client libraries and
@@ -896,13 +983,11 @@ def init(
     """
     global _configured_api_key, _configured_endpoint
 
-    api_key = api_key or os.environ.get("PROMPTIC_API_KEY")
-    if not api_key:
-        msg = (
-            "Promptic API key is required. "
-            "Pass api_key= or set the PROMPTIC_API_KEY environment variable."
-        )
-        raise ValueError(msg)
+    api_key, ai_application_id = _resolve_tracing_credentials(
+        api_key=api_key,
+        access_token=access_token,
+        ai_application_id=ai_application_id,
+    )
 
     endpoint = endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
     selected_instrumentors = None
@@ -914,7 +999,11 @@ def init(
 
     if getattr(trace._TRACER_PROVIDER_SET_ONCE, "_done", False):  # noqa: SLF001
         logger.warning("Promptic tracing is already initialized; ignoring repeated init() call.")
-        _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
+        _configure_artifacts_once(
+            api_key=api_key,
+            endpoint=endpoint,
+            ai_application_id=ai_application_id,
+        )
         if auto_instrument:
             _auto_instrument(
                 instrumentors=instrumentors,
@@ -935,16 +1024,20 @@ def init(
     # With this stack, oversized batches recover transparently without
     # re-uploading artifacts on each bisected retry. We keep OTel's default
     # `max_export_batch_size` (512) because the bisecter makes overflow free.
+    exporter_headers = {"Authorization": f"Bearer {api_key}"}
+    if ai_application_id:
+        exporter_headers["X-AI-Application-Id"] = ai_application_id
     exporter = _LoggingExporter(
         _ArtifactRewritingExporter(
             _BisectingExporter(
                 _OTLPSpanExporter413Aware(
                     endpoint=traces_endpoint,
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    headers=exporter_headers,
                 ),
             ),
             endpoint=endpoint,
             api_key=api_key,
+            ai_application_id=ai_application_id,
         )
     )
 
@@ -958,7 +1051,11 @@ def init(
     provider.add_span_processor(_ComponentAttributeProcessor())
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-    _configure_artifacts_once(api_key=api_key, endpoint=endpoint)
+    _configure_artifacts_once(
+        api_key=api_key,
+        endpoint=endpoint,
+        ai_application_id=ai_application_id,
+    )
 
     # Ensure all spans are flushed when the process exits.
     atexit.register(provider.shutdown)

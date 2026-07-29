@@ -47,9 +47,13 @@ class TestInit:
         _reset_tracer_provider()
         tracing_module._configured_api_key = None  # noqa: SLF001
         tracing_module._configured_endpoint = None  # noqa: SLF001
+        tracing_module._configured_ai_application_id = None  # noqa: SLF001
 
     def test_init_requires_api_key(self):
-        with pytest.raises(ValueError, match="API key is required"):
+        with (
+            patch("promptic_sdk.cli.config.load_config", return_value=None),
+            pytest.raises(ValueError, match="authentication required"),
+        ):
             init(api_key=None)
 
     def test_init_reads_api_key_from_env(self, monkeypatch):
@@ -62,6 +66,20 @@ class TestInit:
         call_kwargs = mock_exporter.call_args[1]
         assert call_kwargs["endpoint"] == "https://promptic.eu/api/v1/traces"
         assert call_kwargs["headers"]["Authorization"] == "Bearer pk_test_key"
+
+    def test_init_uses_login_token_with_ai_application_scope(self):
+        with patch("promptic_sdk.tracing._OTLPSpanExporter413Aware") as mock_exporter:
+            mock_exporter.return_value = MagicMock()
+            init(
+                access_token="login-token",  # noqa: S106 - synthetic credential
+                ai_application_id="application-1",
+            )
+
+        call_kwargs = mock_exporter.call_args[1]
+        assert call_kwargs["headers"] == {
+            "Authorization": "Bearer login-token",
+            "X-AI-Application-Id": "application-1",
+        }
 
     def test_init_custom_endpoint(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
@@ -219,6 +237,7 @@ class TestInit:
             bisecting_exporter,
             endpoint="https://promptic.eu",
             api_key="pk_test",
+            ai_application_id=None,
         )
 
     def test_repeated_init_does_not_replace_artifact_credentials(self, monkeypatch):
