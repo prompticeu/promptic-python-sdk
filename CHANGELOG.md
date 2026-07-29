@@ -8,7 +8,7 @@
 
 ## Improvements
 
-- Updated client documentation to note 402 billing gate on start_experiment and create_evaluation.
+- Updated client documentation to note the 402 billing gate on `start_experiment`.
 
 ## v0.15.0 (2026-05-23)
 
