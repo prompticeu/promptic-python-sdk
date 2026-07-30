@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from typing_extensions import Unpack
 
 from promptic_sdk.models import (
     AgentEvaluation,
@@ -21,8 +22,12 @@ from promptic_sdk.models import (
     ComponentCreated,
     ComponentList,
     Dataset,
+    DatasetCase,
+    DatasetCaseCreate,
+    DatasetCaseList,
+    DatasetCaseUpdate,
     DatasetList,
-    DatasetWithItems,
+    DatasetWithCases,
     DeployedPrompt,
     Deployment,
     DeploymentCreated,
@@ -34,8 +39,6 @@ from promptic_sdk.models import (
     IterationList,
     IterationWithScores,
     JudgeResultList,
-    Observation,
-    ObservationList,
     Run,
     RunList,
     RunWithTraces,
@@ -79,24 +82,6 @@ class PrompticAPIError(Exception):
         self.status_code = status_code
         self.message = message
         super().__init__(f"[{status_code}] {message}")
-
-
-def _normalize_observation_payload(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert legacy ``input`` observation payloads to ``variables``.
-
-    The platform stores observation inputs as named variables. For convenience,
-    the SDK still accepts the old ``input=...`` shape and sends it as the
-    default ``input`` variable.
-    """
-    payload = dict(data)
-    legacy_input = payload.pop("input", None)
-    if legacy_input is not None and "variables" not in payload:
-        payload["variables"] = {"input": legacy_input}
-    return payload
-
-
-def _normalize_observation_payloads(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_normalize_observation_payload(obs) for obs in observations]
 
 
 @dataclass
@@ -370,7 +355,7 @@ class PrompticClient:
         continue_from_optimized: bool = False,
         initial_prompt_override: str | None = None,
     ) -> Experiment:
-        """Duplicate an experiment (clones observations + evaluators).
+        """Duplicate an experiment (clones dataset cases + evaluators).
 
         Creates a new experiment under the same AI component as the source.
         By default the new experiment starts from the source's initial
@@ -396,34 +381,6 @@ class PrompticClient:
         if initial_prompt_override is not None:
             body["initialPromptOverride"] = initial_prompt_override
         return self._post(f"/experiments/{experiment_id}/duplicate", json=body)
-
-    # ── Observations ─────────────────────────────────────────────────
-
-    def list_observations(self, experiment_id: str) -> ObservationList:
-        """List observations for an experiment."""
-        return self._get(f"/experiments/{experiment_id}/observations")
-
-    def create_observations(
-        self, experiment_id: str, observations: list[dict[str, Any]]
-    ) -> ObservationList:
-        """Create observations for an experiment (batch)."""
-        return self._post(
-            f"/experiments/{experiment_id}/observations",
-            json=_normalize_observation_payloads(observations),
-        )
-
-    def update_observation(
-        self, experiment_id: str, observation_id: int, **data: Any
-    ) -> Observation:
-        """Update an observation."""
-        return self._patch(
-            f"/experiments/{experiment_id}/observations/{observation_id}",
-            json=_normalize_observation_payload(data),
-        )
-
-    def delete_observation(self, experiment_id: str, observation_id: int) -> None:
-        """Delete an observation."""
-        self._delete(f"/experiments/{experiment_id}/observations/{observation_id}")
 
     # ── Evaluators ───────────────────────────────────────────────────
 
@@ -509,13 +466,50 @@ class PrompticClient:
         """List datasets for an AI component."""
         return self._get(f"/components/{component_id}/datasets")
 
-    def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
-        """Get a dataset with its items."""
+    def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithCases:
+        """Get a dataset with its canonical cases."""
         return self._get(f"/components/{component_id}/datasets/{dataset_id}")
 
     def delete_dataset(self, component_id: str, dataset_id: str) -> None:
         """Delete a dataset."""
         self._delete(f"/components/{component_id}/datasets/{dataset_id}")
+
+    def list_dataset_cases(self, component_id: str, dataset_id: str) -> DatasetCaseList:
+        """List the canonical cases in a dataset."""
+        return self._get(f"/components/{component_id}/datasets/{dataset_id}/cases")
+
+    def get_dataset_case(self, component_id: str, dataset_id: str, case_id: int) -> DatasetCase:
+        """Get one canonical dataset case."""
+        return self._get(f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}")
+
+    def create_dataset_cases(
+        self,
+        component_id: str,
+        dataset_id: str,
+        cases: list[DatasetCaseCreate],
+    ) -> DatasetCaseList:
+        """Create canonical JSON cases in a dataset."""
+        return self._post(
+            f"/components/{component_id}/datasets/{dataset_id}/cases",
+            json=cases,
+        )
+
+    def update_dataset_case(
+        self,
+        component_id: str,
+        dataset_id: str,
+        case_id: int,
+        **data: Unpack[DatasetCaseUpdate],
+    ) -> DatasetCase:
+        """Update one canonical dataset case."""
+        return self._patch(
+            f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}",
+            json=data,
+        )
+
+    def delete_dataset_case(self, component_id: str, dataset_id: str, case_id: int) -> None:
+        """Delete one canonical dataset case."""
+        self._delete(f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}")
 
     # ── Runs ────────────────────────────────────────────────────────
 
@@ -933,7 +927,7 @@ class AsyncPrompticClient:
         continue_from_optimized: bool = False,
         initial_prompt_override: str | None = None,
     ) -> Experiment:
-        """Duplicate an experiment (clones observations + evaluators).
+        """Duplicate an experiment (clones dataset cases + evaluators).
 
         Creates a new experiment under the same AI component as the source.
         By default the new experiment starts from the source's initial
@@ -959,34 +953,6 @@ class AsyncPrompticClient:
         if initial_prompt_override is not None:
             body["initialPromptOverride"] = initial_prompt_override
         return await self._post(f"/experiments/{experiment_id}/duplicate", json=body)
-
-    # ── Observations ─────────────────────────────────────────────────
-
-    async def list_observations(self, experiment_id: str) -> ObservationList:
-        """List observations for an experiment."""
-        return await self._get(f"/experiments/{experiment_id}/observations")
-
-    async def create_observations(
-        self, experiment_id: str, observations: list[dict[str, Any]]
-    ) -> ObservationList:
-        """Create observations for an experiment (batch)."""
-        return await self._post(
-            f"/experiments/{experiment_id}/observations",
-            json=_normalize_observation_payloads(observations),
-        )
-
-    async def update_observation(
-        self, experiment_id: str, observation_id: int, **data: Any
-    ) -> Observation:
-        """Update an observation."""
-        return await self._patch(
-            f"/experiments/{experiment_id}/observations/{observation_id}",
-            json=_normalize_observation_payload(data),
-        )
-
-    async def delete_observation(self, experiment_id: str, observation_id: int) -> None:
-        """Delete an observation."""
-        await self._delete(f"/experiments/{experiment_id}/observations/{observation_id}")
 
     # ── Evaluators ───────────────────────────────────────────────────
 
@@ -1069,13 +1035,52 @@ class AsyncPrompticClient:
         """List datasets for an AI component."""
         return await self._get(f"/components/{component_id}/datasets")
 
-    async def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithItems:
-        """Get a dataset with its items."""
+    async def get_dataset(self, component_id: str, dataset_id: str) -> DatasetWithCases:
+        """Get a dataset with its canonical cases."""
         return await self._get(f"/components/{component_id}/datasets/{dataset_id}")
 
     async def delete_dataset(self, component_id: str, dataset_id: str) -> None:
         """Delete a dataset."""
         await self._delete(f"/components/{component_id}/datasets/{dataset_id}")
+
+    async def list_dataset_cases(self, component_id: str, dataset_id: str) -> DatasetCaseList:
+        """List the canonical cases in a dataset."""
+        return await self._get(f"/components/{component_id}/datasets/{dataset_id}/cases")
+
+    async def get_dataset_case(
+        self, component_id: str, dataset_id: str, case_id: int
+    ) -> DatasetCase:
+        """Get one canonical dataset case."""
+        return await self._get(f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}")
+
+    async def create_dataset_cases(
+        self,
+        component_id: str,
+        dataset_id: str,
+        cases: list[DatasetCaseCreate],
+    ) -> DatasetCaseList:
+        """Create canonical JSON cases in a dataset."""
+        return await self._post(
+            f"/components/{component_id}/datasets/{dataset_id}/cases",
+            json=cases,
+        )
+
+    async def update_dataset_case(
+        self,
+        component_id: str,
+        dataset_id: str,
+        case_id: int,
+        **data: Unpack[DatasetCaseUpdate],
+    ) -> DatasetCase:
+        """Update one canonical dataset case."""
+        return await self._patch(
+            f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}",
+            json=data,
+        )
+
+    async def delete_dataset_case(self, component_id: str, dataset_id: str, case_id: int) -> None:
+        """Delete one canonical dataset case."""
+        await self._delete(f"/components/{component_id}/datasets/{dataset_id}/cases/{case_id}")
 
     # ── Runs ────────────────────────────────────────────────────────
 

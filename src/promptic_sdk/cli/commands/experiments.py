@@ -270,7 +270,7 @@ def duplicate_experiment(
     ),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    """Duplicate an experiment (clones observations + evaluators).
+    """Duplicate an experiment (clones dataset cases + evaluators).
 
     The new experiment lives on the same AI component and starts from the
     source's initial prompt (or ``--initial-prompt`` if provided). Use
@@ -303,7 +303,7 @@ def continue_experiment(
     """Continue from an experiment's best iteration.
 
     Creates a new experiment under the same AI component, copying
-    observations + evaluators from the source, and seeds the initial
+    dataset cases + evaluators from the source, and seeds the initial
     prompt from the source's best optimized iteration. Useful for chaining
     optimization runs after promising results.
     """

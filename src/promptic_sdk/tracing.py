@@ -18,6 +18,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, Literal, Protocol, TypeAlias
+from uuid import UUID
 
 import httpx
 from opentelemetry import trace
@@ -32,7 +33,7 @@ logger = logging.getLogger("promptic_sdk")
 _DEFAULT_ENDPOINT = "https://promptic.eu"
 
 PROMPTIC_COMPONENT_ATTR = "promptic.ai_component"
-PROMPTIC_DATASET_ATTR = "promptic.dataset"
+PROMPTIC_DATASET_ID_ATTR = "promptic.dataset.id"
 PROMPTIC_RUN_ATTR = "promptic.run"
 
 InstrumentorName: TypeAlias = Literal[
@@ -65,9 +66,9 @@ _current_component: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "promptic_ai_component", default=None
 )
 
-# Context variable that holds the current dataset name.
-_current_dataset: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "promptic_dataset", default=None
+# Context variable that holds the current dataset UUID.
+_current_dataset_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "promptic_dataset_id", default=None
 )
 
 # Context variable that holds the current run name.
@@ -781,15 +782,15 @@ class _BisectingExporter(SpanExporter):
 
 
 class _ComponentAttributeProcessor(SpanProcessor):
-    """Add ``promptic.ai_component`` attribute to spans inside :func:`ai_component`."""
+    """Add Promptic ownership attributes to spans created inside SDK contexts."""
 
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         name = _current_component.get()
         if name is not None:
             span.set_attribute(PROMPTIC_COMPONENT_ATTR, name)
-        ds = _current_dataset.get()
-        if ds is not None:
-            span.set_attribute(PROMPTIC_DATASET_ATTR, ds)
+        dataset_id = _current_dataset_id.get()
+        if dataset_id is not None:
+            span.set_attribute(PROMPTIC_DATASET_ID_ATTR, dataset_id)
         run = _current_run.get()
         if run is not None:
             span.set_attribute(PROMPTIC_RUN_ATTR, run)
@@ -971,8 +972,8 @@ def init(
 
 
 def _langsmith_tracing_context(
-    component: str,
-    dataset: str | None,
+    component: str | None,
+    dataset_id: str | None,
     run: str | None,
 ) -> AbstractContextManager | None:
     """Return a ``langsmith.tracing_context`` if available, else ``None``.
@@ -980,7 +981,7 @@ def _langsmith_tracing_context(
     Injects Promptic attributes into LangSmith run metadata so they appear
     as span attributes when the LangSmith OTel exporter converts runs to
     OTel spans.  Without this, LangSmith-created spans would lack the
-    ``promptic.ai_component`` / ``promptic.dataset`` / ``promptic.run``
+    ``promptic.ai_component`` / ``promptic.dataset.id`` / ``promptic.run``
     attributes needed to link traces to AI components.
     """
     if os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() != "true":
@@ -990,9 +991,11 @@ def _langsmith_tracing_context(
     except ImportError:
         return None
 
-    metadata: dict[str, str] = {PROMPTIC_COMPONENT_ATTR: component}
-    if dataset:
-        metadata[PROMPTIC_DATASET_ATTR] = dataset
+    metadata: dict[str, str] = {}
+    if component:
+        metadata[PROMPTIC_COMPONENT_ATTR] = component
+    if dataset_id:
+        metadata[PROMPTIC_DATASET_ID_ATTR] = dataset_id
     if run:
         metadata[PROMPTIC_RUN_ATTR] = run
     return tracing_context(metadata=metadata)
@@ -1002,7 +1005,7 @@ def _langsmith_tracing_context(
 def ai_component(
     name: str,
     *,
-    dataset: str | None = None,
+    dataset_id: str | None = None,
     run: str | None = None,
 ) -> Iterator[None]:
     """Tag all spans created within this context with an AI Component name.
@@ -1012,9 +1015,9 @@ def ai_component(
 
     Args:
         name: AI Component name in the workspace.
-        dataset: Optional dataset name. When set, traces are automatically
-            added to the named dataset (created if it doesn't exist).
-        run: Optional run name. When set alongside ``dataset``, traces are
+        dataset_id: Optional dataset UUID. When set, traces are added to that
+            existing dataset. Invalid IDs fail before any spans are created.
+        run: Optional run name. When set alongside ``dataset_id``, traces are
             grouped into a named run within the dataset. Each unique run name
             creates a separate run, allowing you to compare different
             executions against the same dataset.
@@ -1025,16 +1028,26 @@ def ai_component(
             response = openai_client.chat.completions.create(...)
 
         # With dataset and run tagging:
-        with promptic_sdk.ai_component("my-agent", dataset="eval-set", run="v1-baseline"):
+        with promptic_sdk.ai_component(
+            "my-agent",
+            dataset_id="550e8400-e29b-41d4-a716-446655440000",
+            run="v1-baseline",
+        ):
             agent.run(test_input)
     """
+    normalized_dataset_id = _normalize_dataset_id(dataset_id) if dataset_id is not None else None
+    effective_dataset_id = normalized_dataset_id or _current_dataset_id.get()
+    if run is not None and effective_dataset_id is None:
+        msg = "run requires dataset_id so the trace can be linked to a dataset run."
+        raise ValueError(msg)
+
     comp_token = _current_component.set(name)
-    ds_token = _current_dataset.set(dataset) if dataset else None
+    ds_token = _current_dataset_id.set(normalized_dataset_id) if normalized_dataset_id else None
     run_token = _current_run.set(run) if run else None
 
     # When LangSmith OTel bridge is active, inject Promptic attributes into
     # LangSmith run metadata so they appear as span attributes after export.
-    langsmith_ctx = _langsmith_tracing_context(name, dataset, run)
+    langsmith_ctx = _langsmith_tracing_context(name, effective_dataset_id, run)
 
     try:
         if langsmith_ctx is not None:
@@ -1045,29 +1058,51 @@ def ai_component(
             langsmith_ctx.__exit__(None, None, None)
         _current_component.reset(comp_token)
         if ds_token is not None:
-            _current_dataset.reset(ds_token)
+            _current_dataset_id.reset(ds_token)
         if run_token is not None:
             _current_run.reset(run_token)
 
 
 @contextmanager
-def dataset(name: str) -> Iterator[None]:
-    """Tag all spans created within this context with a dataset name.
+def dataset(dataset_id: str) -> Iterator[None]:
+    """Tag all spans created within this context with a dataset UUID.
 
-    Traces with a dataset attribute are automatically added to the named
-    dataset during OTLP ingestion (the dataset is created if it doesn't exist).
+    The dataset must already exist. Invalid UUIDs fail before the context is
+    entered, while unknown IDs are rejected by trace ingestion.
 
     Can be nested inside :func:`ai_component` for composability::
 
         with promptic_sdk.ai_component("my-agent"):
-            with promptic_sdk.dataset("eval-round-1"):
+            with promptic_sdk.dataset("550e8400-e29b-41d4-a716-446655440000"):
                 agent.run(test_input)
     """
-    token = _current_dataset.set(name)
+    normalized_dataset_id = _normalize_dataset_id(dataset_id)
+    token = _current_dataset_id.set(normalized_dataset_id)
+    langsmith_ctx = _langsmith_tracing_context(
+        _current_component.get(),
+        normalized_dataset_id,
+        _current_run.get(),
+    )
     try:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__enter__()
         yield
     finally:
-        _current_dataset.reset(token)
+        if langsmith_ctx is not None:
+            langsmith_ctx.__exit__(None, None, None)
+        _current_dataset_id.reset(token)
+
+
+def _normalize_dataset_id(dataset_id: str) -> str:
+    """Validate and normalize a dataset UUID before emitting trace attributes."""
+    if not isinstance(dataset_id, str) or not dataset_id.strip():
+        msg = "dataset_id must be a UUID string."
+        raise ValueError(msg)
+    try:
+        return str(UUID(dataset_id))
+    except ValueError as error:
+        msg = "dataset_id must be a valid UUID string."
+        raise ValueError(msg) from error
 
 
 def _warn_on_instrumentor_conflicts(selected_names: set[str]) -> None:
