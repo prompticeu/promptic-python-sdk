@@ -58,19 +58,14 @@ RequestParams: TypeAlias = Mapping[str, Any] | Sequence[tuple[str, Any]]
 class _AgentGymCredentials:
     bearer_token: str = field(repr=False)
     ai_application_id: str | None
-    is_runner_key: bool
 
 
 def _resolve_agent_gym_credentials(
     *,
-    submission_token: str | None,
-    runner_token: str | None,
     api_key: str | None,
     access_token: str | None,
     ai_application_id: str | None,
 ) -> _AgentGymCredentials:
-    explicit_runner_token = runner_token or submission_token
-    environment_runner_token = os.environ.get("PROMPTIC_AGENT_GYM_TOKEN")
     resolved_api_key = api_key
     resolved_access_token = access_token
     resolved_ai_application_id = (
@@ -79,26 +74,8 @@ def _resolve_agent_gym_credentials(
         or os.environ.get("PROMPTIC_WORKSPACE_ID")
     )
 
-    if explicit_runner_token:
-        if not explicit_runner_token.startswith("ags_"):
-            raise ValueError("Agent Gym runner tokens must start with 'ags_'")
-        return _AgentGymCredentials(
-            bearer_token=explicit_runner_token,
-            ai_application_id=None,
-            is_runner_key=True,
-        )
-
     resolved_access_token = resolved_access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
     resolved_api_key = resolved_api_key or os.environ.get("PROMPTIC_API_KEY")
-    if not resolved_api_key and not resolved_access_token and environment_runner_token:
-        if not environment_runner_token.startswith("ags_"):
-            raise ValueError("Agent Gym runner tokens must start with 'ags_'")
-        return _AgentGymCredentials(
-            bearer_token=environment_runner_token,
-            ai_application_id=None,
-            is_runner_key=True,
-        )
-
     if not resolved_api_key and not resolved_access_token:
         try:
             from promptic_sdk.cli.config import load_config
@@ -115,8 +92,7 @@ def _resolve_agent_gym_credentials(
     if not bearer_token:
         raise ValueError(
             "Promptic authentication required. Run 'promptic login', pass api_key= or "
-            "access_token=, or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN. "
-            "PROMPTIC_AGENT_GYM_TOKEN is only needed for an optional scoped runner key."
+            "access_token=, or set PROMPTIC_API_KEY / PROMPTIC_ACCESS_TOKEN."
         )
     if resolved_access_token and not resolved_ai_application_id:
         raise ValueError(
@@ -127,7 +103,6 @@ def _resolve_agent_gym_credentials(
     return _AgentGymCredentials(
         bearer_token=bearer_token,
         ai_application_id=resolved_ai_application_id,
-        is_runner_key=False,
     )
 
 
@@ -601,33 +576,23 @@ def _validate_manifest_page_identity(first: ManifestPage, page: ManifestPage) ->
 
 @dataclass
 class AgentGymClient:
-    """Synchronous Agent Gym client using normal Promptic authentication by default.
+    """Synchronous Agent Gym client using normal Promptic authentication."""
 
-    A scoped ``ags_`` runner key remains available for CI or remote runners that
-    should not receive a normal Promptic credential.
-    """
-
-    submission_token: str | None = field(default=None, repr=False)
     endpoint: str | None = None
     timeout: float = 30.0
     api_key: str | None = field(default=None, repr=False)
     access_token: str | None = field(default=None, repr=False)
     ai_application_id: str | None = None
-    runner_token: str | None = field(default=None, repr=False)
     _client: httpx.Client = field(init=False, repr=False)
     _direct_client: httpx.Client = field(init=False, repr=False)
-    _uses_runner_key: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize authenticated API and unauthenticated direct-transfer clients."""
         credentials = _resolve_agent_gym_credentials(
-            submission_token=self.submission_token,
-            runner_token=self.runner_token,
             api_key=self.api_key,
             access_token=self.access_token,
             ai_application_id=self.ai_application_id,
         )
-        self._uses_runner_key = credentials.is_runner_key
         self.ai_application_id = credentials.ai_application_id
         self.endpoint = (
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)
@@ -1327,29 +1292,23 @@ class ExternalSubmissionSession:
 
 @dataclass
 class AsyncAgentGymClient:
-    """Asynchronous Agent Gym client using normal Promptic authentication by default."""
+    """Asynchronous Agent Gym client using normal Promptic authentication."""
 
-    submission_token: str | None = field(default=None, repr=False)
     endpoint: str | None = None
     timeout: float = 30.0
     api_key: str | None = field(default=None, repr=False)
     access_token: str | None = field(default=None, repr=False)
     ai_application_id: str | None = None
-    runner_token: str | None = field(default=None, repr=False)
     _client: httpx.AsyncClient = field(init=False, repr=False)
     _direct_client: httpx.AsyncClient = field(init=False, repr=False)
-    _uses_runner_key: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize authenticated API and unauthenticated direct-transfer clients."""
         credentials = _resolve_agent_gym_credentials(
-            submission_token=self.submission_token,
-            runner_token=self.runner_token,
             api_key=self.api_key,
             access_token=self.access_token,
             ai_application_id=self.ai_application_id,
         )
-        self._uses_runner_key = credentials.is_runner_key
         self.ai_application_id = credentials.ai_application_id
         self.endpoint = (
             self.endpoint or os.environ.get("PROMPTIC_ENDPOINT", _DEFAULT_ENDPOINT)

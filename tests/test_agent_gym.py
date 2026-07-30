@@ -32,7 +32,7 @@ RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 BUNDLE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 TRACE_ARTIFACT_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 RAW_TRACE_ID = "ABCDEF0123456789ABCDEF0123456789"
-TOKEN = "ags_test_submission_secret"  # noqa: S105 - synthetic credential
+API_KEY = "promptic_test_api_key"  # noqa: S105 - synthetic credential
 
 TASK = {
     "taskId": None,
@@ -134,7 +134,7 @@ def _sync_client(
     direct_handler: httpx.MockTransport | None = None,
 ) -> AgentGymClient:
     client = AgentGymClient(
-        submission_token=TOKEN,
+        api_key=API_KEY,
         endpoint="https://promptic.example",
     )
     client._client.close()
@@ -142,7 +142,7 @@ def _sync_client(
     client._client = httpx.Client(
         transport=api_handler,
         base_url="https://promptic.example/api/v1",
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {API_KEY}"},
     )
     client._direct_client = httpx.Client(
         transport=direct_handler or httpx.MockTransport(lambda _: httpx.Response(404)),
@@ -156,13 +156,13 @@ def _async_client(
     direct_handler: httpx.MockTransport | None = None,
 ) -> AsyncAgentGymClient:
     client = AsyncAgentGymClient(
-        submission_token=TOKEN,
+        api_key=API_KEY,
         endpoint="https://promptic.example",
     )
     client._client = httpx.AsyncClient(
         transport=api_handler,
         base_url="https://promptic.example/api/v1",
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {API_KEY}"},
     )
     client._direct_client = httpx.AsyncClient(
         transport=direct_handler or httpx.MockTransport(lambda _: httpx.Response(404)),
@@ -195,29 +195,6 @@ class TestAgentGymClient:
         finally:
             client.close()
 
-    def test_runner_key_remains_an_optional_scoped_authentication_path(self):
-        client = AgentGymClient(
-            runner_token=TOKEN,
-            endpoint="https://promptic.example",
-        )
-        try:
-            assert client._client.headers["authorization"] == f"Bearer {TOKEN}"
-            assert client._uses_runner_key is True
-        finally:
-            client.close()
-
-    def test_explicit_api_key_takes_precedence_over_runner_key_env(self, monkeypatch):
-        monkeypatch.setenv("PROMPTIC_AGENT_GYM_TOKEN", TOKEN)
-        client = AgentGymClient(
-            api_key="promptic-api-key",
-            endpoint="https://promptic.example",
-        )
-        try:
-            assert client._client.headers["authorization"] == "Bearer promptic-api-key"
-            assert client._uses_runner_key is False
-        finally:
-            client.close()
-
     def test_full_external_submission_happy_path(self, tmp_path: Path):
         api_requests: list[httpx.Request] = []
         direct_requests: list[httpx.Request] = []
@@ -227,7 +204,7 @@ class TestAgentGymClient:
         def api_handler(request: httpx.Request) -> httpx.Response:
             nonlocal trace_resolution_attempts
             api_requests.append(request)
-            assert request.headers["authorization"] == f"Bearer {TOKEN}"
+            assert request.headers["authorization"] == f"Bearer {API_KEY}"
             path = request.url.path
 
             if request.method == "POST" and path.endswith("/submissions"):
@@ -533,7 +510,7 @@ class TestAgentGymClient:
         error = raised.value
         assert error.code == "artifact_not_verified"
         assert error.details == {"artifact_ids": [ARTIFACT_ID]}
-        assert TOKEN not in str(error)
+        assert API_KEY not in str(error)
 
     @pytest.mark.parametrize(
         "kind",
@@ -626,7 +603,7 @@ class TestAgentGymClient:
             httpx.MockTransport(api_handler),
             httpx.MockTransport(lambda _: httpx.Response(403, text="signed secret")),
         ) as client:
-            assert TOKEN not in repr(client)
+            assert API_KEY not in repr(client)
             reservation = client.reserve_artifact(
                 BENCHMARK_ID,
                 SUBMISSION_ID,
@@ -744,7 +721,7 @@ class TestAsyncAgentGymClient:
             httpx.MockTransport(api_handler),
             httpx.MockTransport(direct_handler),
         )
-        assert TOKEN not in repr(client)
+        assert API_KEY not in repr(client)
         try:
             session = await client.start_submission(BENCHMARK_ID, idempotency_key="async-create")
             assert (await session.get_manifest())["data"][0]["case_id"] == CASE_ONE_ID

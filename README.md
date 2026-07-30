@@ -296,10 +296,6 @@ promptic gym run BENCHMARK_ID my_agent:run \
   --version 1.0.0
 ```
 
-Benchmark-scoped `ags_` runner keys are optional. Use one for CI or a remote
-runner that should not receive a normal Promptic credential by passing
-`runner_token=` or setting `PROMPTIC_AGENT_GYM_TOKEN`.
-
 The callback-based `submit()` and `promptic gym run` APIs execute candidate
 code in the authenticated runner process and are therefore intended for code
 you trust. Generated or sandboxed code should receive no Promptic credential:
@@ -312,13 +308,11 @@ artifact reserve/upload/complete, OTEL trace resolution, finalization, status
 polling, and cancellation. Output files must use these submission artifact
 methods; generic trace artifacts are separate execution evidence.
 
-A runner key with `trace:write` can also be passed to
-`promptic_sdk.init(api_key=token)`. Flush exported spans, resolve their raw
-32-hex OTEL IDs through `session.wait_for_resolved_traces()`, and put the
-returned trace database UUIDs in each prediction's
-`execution_refs.trace_ids`.
+The same saved login or API key can initialize tracing with
+`promptic_sdk.init()`. Flush exported spans, resolve their raw 32-hex OTEL IDs
+through `session.wait_for_resolved_traces()`, and put the returned trace
+database UUIDs in each prediction's `execution_refs.trace_ids`.
 
-The runner key authenticates OTLP trace ingestion and trace resolution.
 The platform does not currently expose a submission-scoped trace-artifact
 creation endpoint, so `trace_artifact_ids` can only reference trace artifacts
 that already exist in the same AI Application. Prediction output files always

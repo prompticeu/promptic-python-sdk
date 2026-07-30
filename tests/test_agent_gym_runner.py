@@ -31,6 +31,8 @@ CASE_IDS = (
     "66666666-6666-4666-8666-666666666666",
     "77777777-7777-4777-8777-777777777777",
 )
+RAW_TRACE_ID = "0123456789abcdef0123456789abcdef"
+TRACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 def _manifest() -> ExternalSubmissionManifest:
@@ -156,6 +158,18 @@ class _SyncSession:
     def status(self) -> SubmissionStatus:
         return _status()
 
+    def wait_for_resolved_traces(
+        self,
+        raw_trace_ids: list[str],
+        *,
+        max_wait: float,
+        poll_interval: float,
+    ) -> list[str]:
+        assert raw_trace_ids == [RAW_TRACE_ID]
+        assert max_wait == 30
+        assert poll_interval == 0.5
+        return [TRACE_ID]
+
     def cancel(self) -> None:
         self.cancelled = True
 
@@ -185,7 +199,11 @@ def test_submit_runs_cases_uploads_artifacts_and_records_failures(tmp_path: Path
             raise RuntimeError("candidate failed")
         report = tmp_path / "report.html"
         report.write_text("<h1>Report</h1>")
-        return AgentGymCaseResult.artifact(report, summary="Report generated")
+        return AgentGymCaseResult.artifact(
+            report,
+            summary="Report generated",
+            raw_trace_ids=(RAW_TRACE_ID,),
+        )
 
     result = submit_benchmark(
         cast(AgentGymClient, _SyncClient(session)),
@@ -211,9 +229,19 @@ def test_submit_runs_cases_uploads_artifacts_and_records_failures(tmp_path: Path
         "kind": "artifact",
         "value": {"summary": "Report generated"},
     }
+    assert session.predictions[0]["execution_refs"] == {"trace_ids": [TRACE_ID]}
     assert session.predictions[1]["status"] == "failed"
     assert session.predictions[1]["error_code"] == "candidate_exception"
     assert session.predictions[1]["error"] == "candidate failed"
+    assert result.status["run"] == {
+        "id": RUN_ID,
+        "status": "succeeded",
+        "scoring_status": "succeeded",
+        "eligibility_status": "eligible",
+        "eligibility_reasons": [],
+        "scored_at": "2026-07-29T12:01:00Z",
+        "error": None,
+    }
 
 
 class _AsyncSession:

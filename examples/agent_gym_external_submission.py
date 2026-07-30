@@ -1,10 +1,10 @@
-"""Advanced low-level runner using an optional benchmark-scoped runner key.
+"""Advanced low-level runner using normal Promptic authentication.
 
 Required environment variables:
-    PROMPTIC_AGENT_GYM_TOKEN: Benchmark-scoped ``ags_`` runner credential.
     PROMPTIC_BENCHMARK_ID: Benchmark dataset UUID.
 
 Optional environment variables:
+    PROMPTIC_API_KEY: AI Application API key. Uses saved CLI login when omitted.
     PROMPTIC_ENDPOINT: Platform URL.
     CANDIDATE_VERSION: Candidate bundle version (default: ``local-1``).
 """
@@ -49,23 +49,20 @@ def build_report(case: ManifestCase, input_files: list[Path], destination: Path)
 
 def main() -> None:
     """Execute, upload, finalize, and poll one external benchmark submission."""
-    token = _required_env("PROMPTIC_AGENT_GYM_TOKEN")
     benchmark_id = _required_env("PROMPTIC_BENCHMARK_ID")
     endpoint = os.environ.get("PROMPTIC_ENDPOINT", "https://promptic.eu")
     run_key = f"local-{uuid4()}"
     workdir = Path(".promptic-agent-gym") / run_key
 
-    # The scoped runner key can ingest OTLP traces when it has trace:write.
     # Do not call promptic_sdk.artifact() for prediction outputs; use the
     # submission-specific artifact methods below.
     promptic_sdk.init(
-        api_key=token,
         endpoint=endpoint,
         service_name="agent-gym-external-runner",
     )
     tracer = trace.get_tracer(__name__)
 
-    with AgentGymClient(submission_token=token, endpoint=endpoint) as client:
+    with AgentGymClient(endpoint=endpoint) as client:
         session = client.start_submission(
             benchmark_id,
             idempotency_key=f"{run_key}:create",
