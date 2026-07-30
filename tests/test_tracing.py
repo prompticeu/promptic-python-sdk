@@ -1426,6 +1426,50 @@ class TestAiComponent:
             assert _current_dataset_id.get() == dataset_id
         assert _current_dataset_id.get() is None
 
+    @pytest.mark.parametrize(
+        "nesting_order",
+        ["ai_component_then_dataset", "dataset_then_ai_component"],
+    )
+    def test_nested_dataset_context_updates_langsmith_metadata(self, monkeypatch, nesting_order):
+        dataset_id = "550e8400-e29b-41d4-a716-446655440000"
+        active_metadata = []
+
+        class FakeTracingContext:
+            def __init__(self, metadata):
+                self.metadata = metadata
+
+            def __enter__(self):
+                active_metadata.append(self.metadata)
+
+            def __exit__(self, *args):
+                active_metadata.pop()
+
+        monkeypatch.setenv("LANGSMITH_OTEL_ENABLED", "true")
+        fake_langsmith = SimpleNamespace(tracing_context=FakeTracingContext)
+
+        with patch.dict("sys.modules", {"langsmith": fake_langsmith}):
+            if nesting_order == "ai_component_then_dataset":
+                with ai_component("my-agent"):
+                    assert active_metadata == [{PROMPTIC_COMPONENT_ATTR: "my-agent"}]
+                    with dataset(dataset_id):
+                        assert active_metadata[-1] == {
+                            PROMPTIC_COMPONENT_ATTR: "my-agent",
+                            PROMPTIC_DATASET_ID_ATTR: dataset_id,
+                        }
+                    assert active_metadata == [{PROMPTIC_COMPONENT_ATTR: "my-agent"}]
+            else:
+                with dataset(dataset_id):
+                    assert active_metadata == [{PROMPTIC_DATASET_ID_ATTR: dataset_id}]
+                    with ai_component("my-agent", run="baseline"):
+                        assert active_metadata[-1] == {
+                            PROMPTIC_COMPONENT_ATTR: "my-agent",
+                            PROMPTIC_DATASET_ID_ATTR: dataset_id,
+                            tracing_module.PROMPTIC_RUN_ATTR: "baseline",
+                        }
+                    assert active_metadata == [{PROMPTIC_DATASET_ID_ATTR: dataset_id}]
+
+        assert active_metadata == []
+
     def test_invalid_dataset_id_fails_before_context_entry(self):
         with (
             pytest.raises(ValueError, match="dataset_id must be a valid UUID"),

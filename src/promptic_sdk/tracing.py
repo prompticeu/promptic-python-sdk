@@ -972,7 +972,7 @@ def init(
 
 
 def _langsmith_tracing_context(
-    component: str,
+    component: str | None,
     dataset_id: str | None,
     run: str | None,
 ) -> AbstractContextManager | None:
@@ -991,7 +991,9 @@ def _langsmith_tracing_context(
     except ImportError:
         return None
 
-    metadata: dict[str, str] = {PROMPTIC_COMPONENT_ATTR: component}
+    metadata: dict[str, str] = {}
+    if component:
+        metadata[PROMPTIC_COMPONENT_ATTR] = component
     if dataset_id:
         metadata[PROMPTIC_DATASET_ID_ATTR] = dataset_id
     if run:
@@ -1034,7 +1036,8 @@ def ai_component(
             agent.run(test_input)
     """
     normalized_dataset_id = _normalize_dataset_id(dataset_id) if dataset_id is not None else None
-    if run is not None and normalized_dataset_id is None:
+    effective_dataset_id = normalized_dataset_id or _current_dataset_id.get()
+    if run is not None and effective_dataset_id is None:
         msg = "run requires dataset_id so the trace can be linked to a dataset run."
         raise ValueError(msg)
 
@@ -1044,7 +1047,7 @@ def ai_component(
 
     # When LangSmith OTel bridge is active, inject Promptic attributes into
     # LangSmith run metadata so they appear as span attributes after export.
-    langsmith_ctx = _langsmith_tracing_context(name, normalized_dataset_id, run)
+    langsmith_ctx = _langsmith_tracing_context(name, effective_dataset_id, run)
 
     try:
         if langsmith_ctx is not None:
@@ -1073,10 +1076,20 @@ def dataset(dataset_id: str) -> Iterator[None]:
             with promptic_sdk.dataset("550e8400-e29b-41d4-a716-446655440000"):
                 agent.run(test_input)
     """
-    token = _current_dataset_id.set(_normalize_dataset_id(dataset_id))
+    normalized_dataset_id = _normalize_dataset_id(dataset_id)
+    token = _current_dataset_id.set(normalized_dataset_id)
+    langsmith_ctx = _langsmith_tracing_context(
+        _current_component.get(),
+        normalized_dataset_id,
+        _current_run.get(),
+    )
     try:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__enter__()
         yield
     finally:
+        if langsmith_ctx is not None:
+            langsmith_ctx.__exit__(None, None, None)
         _current_dataset_id.reset(token)
 
 
