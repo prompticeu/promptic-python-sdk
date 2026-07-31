@@ -2,12 +2,17 @@
 
 ## Unreleased
 
+## Removed
+
+- Removed legacy Agent Evaluation, run, and annotation client methods, CLI
+  commands, models, and run-based trace grouping (platform endpoints removed).
+
 ## Breaking Changes
 
 - Dataset tracing now uses explicit dataset UUIDs. Pass `dataset_id=` to
   `ai_component()` or a UUID to `dataset()`; the SDK emits
-  `promptic.dataset.id` and rejects invalid or unlinked run contexts before
-  spans are created.
+  `promptic.dataset.id` and rejects invalid dataset IDs before spans are
+  created.
 - Dataset API types and CLI output now use canonical JSON payloads, including
   resource URIs embedded directly in those payloads. Dataset responses expose
   `aiApplicationId` and no longer expose the unreleased `kind` or internal

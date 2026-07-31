@@ -1411,14 +1411,13 @@ class TestAiComponent:
         dataset_id = "550e8400-e29b-41d4-a716-446655440000"
 
         with (
-            ai_component("my-agent", dataset_id=dataset_id, run="baseline"),
+            ai_component("my-agent", dataset_id=dataset_id),
             tracer.start_as_current_span("test-span"),
         ):
             pass
 
         attrs = dict(self.exported_spans[0].attributes)
         assert attrs[PROMPTIC_DATASET_ID_ATTR] == dataset_id
-        assert attrs[tracing_module.PROMPTIC_RUN_ATTR] == "baseline"
 
     def test_dataset_context_sets_and_resets_canonical_id(self):
         dataset_id = "550e8400-e29b-41d4-a716-446655440000"
@@ -1460,11 +1459,10 @@ class TestAiComponent:
             else:
                 with dataset(dataset_id):
                     assert active_metadata == [{PROMPTIC_DATASET_ID_ATTR: dataset_id}]
-                    with ai_component("my-agent", run="baseline"):
+                    with ai_component("my-agent"):
                         assert active_metadata[-1] == {
                             PROMPTIC_COMPONENT_ATTR: "my-agent",
                             PROMPTIC_DATASET_ID_ATTR: dataset_id,
-                            tracing_module.PROMPTIC_RUN_ATTR: "baseline",
                         }
                     assert active_metadata == [{PROMPTIC_DATASET_ID_ATTR: dataset_id}]
 
@@ -1476,13 +1474,6 @@ class TestAiComponent:
             ai_component("my-agent", dataset_id="eval-set"),
         ):
             pytest.fail("invalid dataset context should not be entered")
-
-    def test_run_without_dataset_id_fails_before_context_entry(self):
-        with (
-            pytest.raises(ValueError, match="run requires dataset_id"),
-            ai_component("my-agent", run="baseline"),
-        ):
-            pytest.fail("unlinked run context should not be entered")
 
     def test_legacy_dataset_keyword_is_rejected(self):
         with pytest.raises(TypeError, match="unexpected keyword argument 'dataset'"):

@@ -175,7 +175,6 @@ test_queries = [
 with promptic_sdk.ai_component(
     "travel-planner",
     dataset_id=os.environ["PROMPTIC_DATASET_ID"],
-    run="optimized",
 ):
     for query in test_queries:
         print(f"User: {query}")

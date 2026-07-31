@@ -34,7 +34,6 @@ _DEFAULT_ENDPOINT = "https://promptic.eu"
 
 PROMPTIC_COMPONENT_ATTR = "promptic.ai_component"
 PROMPTIC_DATASET_ID_ATTR = "promptic.dataset.id"
-PROMPTIC_RUN_ATTR = "promptic.run"
 
 InstrumentorName: TypeAlias = Literal[
     "openai",
@@ -69,11 +68,6 @@ _current_component: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # Context variable that holds the current dataset UUID.
 _current_dataset_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "promptic_dataset_id", default=None
-)
-
-# Context variable that holds the current run name.
-_current_run: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "promptic_run", default=None
 )
 
 # Instrumentors that we try to auto-detect and enable.
@@ -791,9 +785,6 @@ class _ComponentAttributeProcessor(SpanProcessor):
         dataset_id = _current_dataset_id.get()
         if dataset_id is not None:
             span.set_attribute(PROMPTIC_DATASET_ID_ATTR, dataset_id)
-        run = _current_run.get()
-        if run is not None:
-            span.set_attribute(PROMPTIC_RUN_ATTR, run)
 
     def on_end(self, span: ReadableSpan) -> None:  # noqa: D102
         pass
@@ -974,15 +965,14 @@ def init(
 def _langsmith_tracing_context(
     component: str | None,
     dataset_id: str | None,
-    run: str | None,
 ) -> AbstractContextManager | None:
     """Return a ``langsmith.tracing_context`` if available, else ``None``.
 
     Injects Promptic attributes into LangSmith run metadata so they appear
     as span attributes when the LangSmith OTel exporter converts runs to
     OTel spans.  Without this, LangSmith-created spans would lack the
-    ``promptic.ai_component`` / ``promptic.dataset.id`` / ``promptic.run``
-    attributes needed to link traces to AI components.
+    ``promptic.ai_component`` / ``promptic.dataset.id`` attributes needed to
+    link traces to AI components.
     """
     if os.environ.get("LANGSMITH_OTEL_ENABLED", "").lower() != "true":
         return None
@@ -996,8 +986,6 @@ def _langsmith_tracing_context(
         metadata[PROMPTIC_COMPONENT_ATTR] = component
     if dataset_id:
         metadata[PROMPTIC_DATASET_ID_ATTR] = dataset_id
-    if run:
-        metadata[PROMPTIC_RUN_ATTR] = run
     return tracing_context(metadata=metadata)
 
 
@@ -1006,7 +994,6 @@ def ai_component(
     name: str,
     *,
     dataset_id: str | None = None,
-    run: str | None = None,
 ) -> Iterator[None]:
     """Tag all spans created within this context with an AI Component name.
 
@@ -1017,37 +1004,28 @@ def ai_component(
         name: AI Component name in the workspace.
         dataset_id: Optional dataset UUID. When set, traces are added to that
             existing dataset. Invalid IDs fail before any spans are created.
-        run: Optional run name. When set alongside ``dataset_id``, traces are
-            grouped into a named run within the dataset. Each unique run name
-            creates a separate run, allowing you to compare different
-            executions against the same dataset.
 
     Example::
 
         with promptic_sdk.ai_component("customer-support-agent"):
             response = openai_client.chat.completions.create(...)
 
-        # With dataset and run tagging:
+        # With dataset tagging:
         with promptic_sdk.ai_component(
             "my-agent",
             dataset_id="550e8400-e29b-41d4-a716-446655440000",
-            run="v1-baseline",
         ):
             agent.run(test_input)
     """
     normalized_dataset_id = _normalize_dataset_id(dataset_id) if dataset_id is not None else None
     effective_dataset_id = normalized_dataset_id or _current_dataset_id.get()
-    if run is not None and effective_dataset_id is None:
-        msg = "run requires dataset_id so the trace can be linked to a dataset run."
-        raise ValueError(msg)
 
     comp_token = _current_component.set(name)
     ds_token = _current_dataset_id.set(normalized_dataset_id) if normalized_dataset_id else None
-    run_token = _current_run.set(run) if run else None
 
     # When LangSmith OTel bridge is active, inject Promptic attributes into
     # LangSmith run metadata so they appear as span attributes after export.
-    langsmith_ctx = _langsmith_tracing_context(name, effective_dataset_id, run)
+    langsmith_ctx = _langsmith_tracing_context(name, effective_dataset_id)
 
     try:
         if langsmith_ctx is not None:
@@ -1059,8 +1037,6 @@ def ai_component(
         _current_component.reset(comp_token)
         if ds_token is not None:
             _current_dataset_id.reset(ds_token)
-        if run_token is not None:
-            _current_run.reset(run_token)
 
 
 @contextmanager
@@ -1081,7 +1057,6 @@ def dataset(dataset_id: str) -> Iterator[None]:
     langsmith_ctx = _langsmith_tracing_context(
         _current_component.get(),
         normalized_dataset_id,
-        _current_run.get(),
     )
     try:
         if langsmith_ctx is not None:

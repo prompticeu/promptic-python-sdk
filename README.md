@@ -149,14 +149,12 @@ from a display name.
 with promptic_sdk.ai_component(
     "my-component",
     dataset_id="550e8400-e29b-41d4-a716-446655440000",
-    run="v1-baseline",
 ):
     agent.run(test_input)
 ```
 
-Invalid dataset IDs and run contexts without a dataset ID fail immediately,
-before spans are created. The SDK emits the `promptic.dataset.id` OpenTelemetry
-attribute for server-side linkage.
+Invalid dataset IDs fail immediately, before spans are created. The SDK emits
+the `promptic.dataset.id` OpenTelemetry attribute for server-side linkage.
 
 ### Tracing workflows with custom spans
 
@@ -307,16 +305,6 @@ promptic [command] [subcommand] [options]
 | `promptic datasets list`               | List datasets                          |
 | `promptic datasets get <id>`           | Get dataset details                    |
 | `promptic datasets delete <id>`        | Delete a dataset                       |
-| `promptic runs create`                 | Create a run                           |
-| `promptic runs list`                   | List runs                              |
-| `promptic runs get <id>`               | Get run details                        |
-| `promptic runs delete <id>`            | Delete a run                           |
-| `promptic annotations create`          | Create an annotation                   |
-| `promptic annotations list`            | List annotations                       |
-| `promptic annotations delete <id>`     | Delete an annotation                   |
-| `promptic evaluations run`             | Run an evaluation                      |
-| `promptic evaluations list`            | List evaluations                       |
-| `promptic evaluations get <id>`        | Get evaluation details                 |
 
 All list commands support `--json` for machine-readable output.
 
