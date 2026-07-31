@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.0 (2026-07-31)
+
+## Features
+
+- Use canonical dataset IDs for tracing.
+
 ## v0.17.0 (2026-07-31)
 
 ## Features
