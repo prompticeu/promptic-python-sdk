@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypeAlias
+from typing import Any, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -82,7 +82,6 @@ class Experiment(TypedDict):
     """Experiment record."""
 
     id: str
-    datasetId: str
     name: str | None
     description: str | None
     targetModel: str
@@ -120,6 +119,28 @@ class ExperimentStarted(TypedDict):
 
     messageId: str
     status: str
+
+
+# ── Observations ─────────────────────────────────────────────────────
+
+
+class Observation(TypedDict):
+    """Observation record with one or more input variables and expected output."""
+
+    id: int
+    experimentId: str
+    idx: int
+    expected: str
+    variables: dict[str, Any]
+    split: SplitType
+    createdAt: str
+    updatedAt: str
+
+
+class ObservationList(TypedDict):
+    """Paginated list of observations."""
+
+    data: list[Observation]
 
 
 # ── Evaluators ───────────────────────────────────────────────────────
@@ -379,71 +400,37 @@ class TraceArtifactList(TypedDict):
 # ── Datasets ────────────────────────────────────────────────────────
 
 AgentEvaluationStatus = Literal["pending", "running", "completed", "failed"]
-JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 
 
-class DatasetCase(TypedDict):
-    """Canonical JSON case whose payloads may contain Promptic resource URIs."""
+class DatasetItem(TypedDict):
+    """Item in an agent dataset linking to a trace."""
 
     id: int
     datasetId: str
-    idx: int | None
-    inputPayload: dict[str, JSONValue]
-    expectedPayload: JSONValue
-    split: SplitType | None
-    metadata: dict[str, JSONValue]
+    traceDbId: str
+    input: str | None
+    output: str | None
     createdAt: str
-    updatedAt: str
-
-
-class DatasetCaseCreateRequired(TypedDict):
-    """Required fields for a canonical dataset case."""
-
-    inputPayload: dict[str, JSONValue]
-
-
-class DatasetCaseCreate(DatasetCaseCreateRequired, total=False):
-    """Fields accepted when creating a canonical dataset case."""
-
-    idx: int | None
-    expectedPayload: JSONValue
-    split: SplitType | None
-    metadata: dict[str, JSONValue]
-
-
-class DatasetCaseUpdate(TypedDict, total=False):
-    """Fields accepted when updating a canonical dataset case."""
-
-    idx: int | None
-    inputPayload: dict[str, JSONValue]
-    expectedPayload: JSONValue
-    split: SplitType | None
-    metadata: dict[str, JSONValue]
-
-
-class DatasetCaseList(TypedDict):
-    """List of canonical dataset cases."""
-
-    data: list[DatasetCase]
 
 
 class Dataset(TypedDict):
-    """AI component-owned dataset record."""
+    """Agent dataset record."""
 
     id: str
     name: str
-    description: str | None
     aiComponentId: str
-    aiApplicationId: str
-    caseCount: int
+    workspaceId: str
+    description: str | None
+    itemCount: int
+    traceCount: int
     createdAt: str
     updatedAt: str
 
 
-class DatasetWithCases(Dataset):
-    """Dataset with its canonical cases."""
+class DatasetWithItems(Dataset):
+    """Dataset with its items."""
 
-    cases: list[DatasetCase]
+    items: list[DatasetItem]
 
 
 class DatasetList(TypedDict):
@@ -599,7 +586,7 @@ class JudgeResult(TypedDict):
     """Canonical per-(target, judge) row produced by an evaluation.
 
     Each row identifies its judge (``judgeKey`` / ``judgeName`` / ``backend``),
-    the concrete thing it scored via exactly one of ``datasetCaseId``,
+    the concrete thing it scored via exactly one of ``datasetItemId``,
     ``traceDbId``, ``annotationId``, or ``runId``, the verdict
     (``score`` / ``rating`` / ``rationale`` / ``evidence`` / ``analysisPayload``),
     and the immutable ``judgeSnapshot`` used to produce it. Re-runs of the
@@ -614,7 +601,7 @@ class JudgeResult(TypedDict):
     judgeName: str
     traceDbId: str | None
     traceOtlpId: str | None
-    datasetCaseId: int | None
+    datasetItemId: int | None
     annotationId: str | None
     runId: str | None
     score: float | None

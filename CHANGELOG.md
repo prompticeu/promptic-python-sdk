@@ -1,17 +1,21 @@
 # Changelog
 
-## Unreleased
+## v0.17.0 (2026-07-31)
 
-## Breaking Changes
+## Features
 
-- Dataset tracing now uses explicit dataset UUIDs. Pass `dataset_id=` to
-  `ai_component()` or a UUID to `dataset()`; the SDK emits
-  `promptic.dataset.id` and rejects invalid or unlinked run contexts before
-  spans are created.
-- Dataset API types and CLI output now use canonical JSON payloads, including
-  resource URIs embedded directly in those payloads. Dataset responses expose
-  `aiApplicationId` and no longer expose the unreleased `kind` or internal
-  `workspaceId` fields.
+- Added `JudgeResult` types and a client method for listing judge results.
+- Added `avgPredictionLatencyMs` to `Iteration`.
+
+## Bug Fixes
+
+- Updated API key examples to use the `ptc_` prefix.
+- Fixed changelog generation to use OpenAI.
+
+## Improvements
+
+- Added a gated production release workflow.
+
 
 ## v0.16.0 (2026-05-28)
 

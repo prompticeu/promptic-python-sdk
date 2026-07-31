@@ -141,23 +141,6 @@ with promptic_sdk.ai_component("my-component"):
     ...
 ```
 
-To add traces to a dataset, pass the dataset's immutable UUID. Datasets are
-created explicitly in the dashboard, CLI, or API; tracing never creates one
-from a display name.
-
-```python
-with promptic_sdk.ai_component(
-    "my-component",
-    dataset_id="550e8400-e29b-41d4-a716-446655440000",
-    run="v1-baseline",
-):
-    agent.run(test_input)
-```
-
-Invalid dataset IDs and run contexts without a dataset ID fail immediately,
-before spans are created. The SDK emits the `promptic.dataset.id` OpenTelemetry
-attribute for server-side linkage.
-
 ### Tracing workflows with custom spans
 
 Most users don't need this. With the right `[extras]` installed, auto-instrumentation already
@@ -253,7 +236,7 @@ Both clients provide typed methods for the full Promptic REST API:
 | Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
 | Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment` |
-| Dataset cases | `list_dataset_cases`, `get_dataset_case`, `create_dataset_cases`, `update_dataset_case`, `delete_dataset_case` |
+| Observations   | `list_observations`, `create_observations`, `update_observation`, `delete_observation` |
 | Evaluators     | `list_evaluators`, `create_evaluators`, `update_evaluator`, `delete_evaluator` |
 | Iterations     | `list_iterations`, `get_iteration`, `get_best_iteration`                |
 | Deployments    | `get_deployment`, `deploy`, `undeploy`, `get_deployed_prompt`           |
@@ -293,6 +276,9 @@ promptic [command] [subcommand] [options]
 | `promptic experiments update <id>`     | Update an experiment                   |
 | `promptic experiments delete <id>`     | Delete an experiment                   |
 | `promptic experiments start <id>`      | Start an experiment                    |
+| `promptic observations list`           | List observations for an experiment    |
+| `promptic observations add`            | Add an observation                     |
+| `promptic observations delete <id>`    | Delete an observation                  |
 | `promptic evaluators list`             | List evaluators for an experiment      |
 | `promptic evaluators add`              | Add an evaluator                       |
 | `promptic evaluators delete <id>`      | Delete an evaluator                    |

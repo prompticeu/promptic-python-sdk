@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -15,19 +15,6 @@ from promptic_sdk.cli import get_client
 datasets_app = typer.Typer(help="Manage agent datasets.")
 console = Console()
 err_console = Console(stderr=True)
-
-
-def _display_payload(value: object, preferred_key: str | None = None) -> str:
-    """Render canonical JSON payloads compactly for the terminal."""
-    if preferred_key and isinstance(value, dict):
-        preferred = cast(dict[str, object], value).get(preferred_key)
-        if isinstance(preferred, str):
-            return preferred
-    if value is None:
-        return "-"
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 @datasets_app.command("create")
@@ -53,11 +40,11 @@ def create_dataset(
 
     console.print(f"[green]Dataset created:[/green] {result['name']}")
     console.print(f"  ID: {result['id']}")
-    console.print(f"  Cases: {result['caseCount']}")
+    console.print(f"  Items: {result['itemCount']}")
     console.print()
     console.print(
         "[dim]Tip: Add traces via SDK with "
-        f"promptic_sdk.ai_component('...', dataset_id='{result['id']}')"
+        "promptic_sdk.ai_component('...', dataset='...')"
         " or use the API.[/dim]"
     )
 
@@ -84,14 +71,14 @@ def list_datasets(
     table = Table(title=f"Datasets ({len(datasets)})")
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Name")
-    table.add_column("Cases", justify="right")
+    table.add_column("Items", justify="right")
     table.add_column("Created")
 
     for ds in datasets:
         table.add_row(
             ds["id"],
             ds["name"],
-            str(ds["caseCount"]),
+            str(ds["itemCount"]),
             ds["createdAt"],
         )
 
@@ -104,7 +91,7 @@ def get_dataset(
     component_id: str = typer.Option(..., "--component", help="AI Component ID."),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    """Get a dataset with its canonical cases."""
+    """Get a dataset with its items."""
     with get_client() as client:
         result = client.get_dataset(component_id, dataset_id)
 
@@ -115,23 +102,25 @@ def get_dataset(
 
     console.print(f"\n[bold]Dataset:[/bold] {result['name']}")
     console.print(f"[bold]ID:[/bold] {result['id']}")
-    console.print(f"[bold]Cases:[/bold] {result['caseCount']}")
+    console.print(f"[bold]Items:[/bold] {result['itemCount']}")
     if result.get("description"):
         console.print(f"[bold]Description:[/bold] {result['description']}")
 
-    cases = result.get("cases", [])
-    if cases:
-        console.print(f"\n[bold]Cases ({len(cases)}):[/bold]")
-        case_table = Table()
-        case_table.add_column("Input", max_width=40)
-        case_table.add_column("Expected", max_width=40)
+    items = result.get("items", [])
+    if items:
+        console.print(f"\n[bold]Items ({len(items)}):[/bold]")
+        item_table = Table()
+        item_table.add_column("Trace ID", style="cyan")
+        item_table.add_column("Input", max_width=40)
+        item_table.add_column("Output", max_width=40)
 
-        for dataset_case in cases:
-            case_table.add_row(
-                _display_payload(dataset_case["inputPayload"], "input")[:80],
-                _display_payload(dataset_case["expectedPayload"], "value")[:80],
+        for item in items:
+            item_table.add_row(
+                item["traceDbId"],
+                (item["input"] or "-")[:80],
+                (item["output"] or "-")[:80],
             )
-        console.print(case_table)
+        console.print(item_table)
 
 
 @datasets_app.command("delete")

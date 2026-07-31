@@ -25,12 +25,10 @@ Run with:
 Environment variables:
     OPENAI_API_KEY      - Your OpenAI API key
     PROMPTIC_API_KEY    - Your Promptic API key (from workspace settings)
-    PROMPTIC_DATASET_ID - Existing dataset UUID for the generated traces
     PROMPTIC_ENDPOINT   - (optional) defaults to https://promptic.eu
 """
 
 import json
-import os
 
 import promptic_sdk
 
@@ -172,11 +170,7 @@ test_queries = [
     "Plan me a weekend in Paris flying from London. I'd budget about $100/day for food and activities.",
 ]
 
-with promptic_sdk.ai_component(
-    "travel-planner",
-    dataset_id=os.environ["PROMPTIC_DATASET_ID"],
-    run="optimized",
-):
+with promptic_sdk.ai_component("travel-planner", dataset="travel-queries", run="optimized"):
     for query in test_queries:
         print(f"User: {query}")
         result = agent.invoke({"messages": [("user", query)]})

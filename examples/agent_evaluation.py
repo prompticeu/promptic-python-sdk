@@ -9,7 +9,7 @@
 """Example: Run an agent with dataset tagging for evaluation.
 
 This script shows how to:
-1. Tag agent runs with an existing dataset ID
+1. Tag agent runs with a dataset name for automatic dataset creation
 2. Run multiple test inputs to build an evaluation dataset
 3. Use the CLI to analyze agent performance
 
@@ -22,7 +22,6 @@ After running, evaluate via CLI:
 Environment variables:
     OPENAI_API_KEY      - Your OpenAI API key
     PROMPTIC_API_KEY    - Your Promptic API key (from workspace settings)
-    PROMPTIC_DATASET_ID - Dataset UUID created in the dashboard or CLI
     PROMPTIC_ENDPOINT   - (optional) defaults to https://promptic.eu
 """
 
@@ -36,7 +35,7 @@ from langchain.agents import create_agent  # noqa: E402
 from langchain_core.tools import tool  # noqa: E402
 
 COMPONENT_NAME = os.environ.get("PROMPTIC_COMPONENT_NAME", "Agent")
-DATASET_ID = os.environ["PROMPTIC_DATASET_ID"]
+DATASET_NAME = os.environ.get("PROMPTIC_DATASET_NAME", "baseline")
 RUN_NAME = os.environ.get("PROMPTIC_RUN_NAME", None)
 MODEL_NAME = os.environ.get("PROMPTIC_MODEL_NAME", "openai:gpt-4.1-nano")
 SYSTEM_PROMPT = os.environ.get(
@@ -76,9 +75,10 @@ test_queries = [
 ]
 
 
-#    All traces are linked to the existing dataset by immutable ID.
+#    All traces are automatically linked to the "eval-round-1" dataset.
+#    Option A: dataset parameter on ai_component (simplest)
 
-with promptic_sdk.ai_component(COMPONENT_NAME, dataset_id=DATASET_ID, run=RUN_NAME):
+with promptic_sdk.ai_component(COMPONENT_NAME, dataset=DATASET_NAME, run=RUN_NAME):
     for query in test_queries:
         result = agent.invoke({"messages": [("user", query)]})
         print(f"Q: {query}")

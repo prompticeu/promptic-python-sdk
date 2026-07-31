@@ -18,6 +18,7 @@ from promptic_sdk.cli.commands.evaluators import evaluators_app
 from promptic_sdk.cli.commands.experiments import experiments_app
 from promptic_sdk.cli.commands.iterations import iterations_app
 from promptic_sdk.cli.commands.login import login, logout
+from promptic_sdk.cli.commands.observations import observations_app
 from promptic_sdk.cli.commands.runs import runs_app
 from promptic_sdk.cli.commands.traces import traces_app
 from promptic_sdk.cli.commands.workspace import workspace_app
@@ -36,6 +37,7 @@ app.add_typer(artifacts_app, name="artifacts")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(components_app, name="components")
 app.add_typer(experiments_app, name="experiments")
+app.add_typer(observations_app, name="observations")
 app.add_typer(evaluators_app, name="evaluators")
 app.add_typer(iterations_app, name="iterations")
 app.add_typer(deployments_app, name="deployments")
