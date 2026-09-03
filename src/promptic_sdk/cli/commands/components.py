@@ -19,7 +19,7 @@ console = Console()
 def list_components(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    """List all AI components in the workspace."""
+    """List all AI components in the AI Application."""
     with get_client() as client:
         result = client.list_components()
 

@@ -41,7 +41,7 @@ Log in via browser (recommended for local development):
 promptic login
 ```
 
-This opens your browser for authentication, then auto-selects your workspace. Credentials are saved to `~/.promptic/config.toml`.
+This opens your browser for authentication, then auto-selects your AI Application. Credentials are saved to `~/.promptic/config.toml`.
 
 For CI/CD or headless environments, use an API key instead:
 
@@ -79,8 +79,8 @@ with PrompticClient() as client:
     # List traces
     traces = client.list_traces(limit=10)
 
-    # Get workspace info
-    workspace = client.get_workspace()
+    # Get AI Application info
+    ai_application = client.get_ai_application()
 
     # Manage experiments
     experiment = client.create_experiment(
@@ -96,6 +96,31 @@ with PrompticClient() as client:
     # Fetch a deployed prompt at runtime
     prompt = client.get_deployed_prompt("comp_...")
 ```
+
+### Tool-selection experiments
+
+Prompt experiments use `create_experiment()` with `classification`, `textGeneration`, or
+`structuredOutput`. Tool selection requires additional configuration and uses a typed,
+all-or-nothing workflow:
+
+```python
+with PrompticClient() as client:
+    experiment = client.create_tool_selection_experiment(
+        "comp_...",
+        tools=[{"name": "get_weather", "description": "Get weather for a city"}],
+        test_cases=[{"query": "Weather in Berlin?", "expected_tool": "get_weather"}],
+        target_model="gpt-4.1-nano",
+        tool_source="manual",
+        optimize_system_prompt=True,
+    )
+    client.start_experiment(experiment["id"])
+```
+
+The experiment dataset is managed automatically and deleted with the experiment. Use
+`create_dataset()` for a named, reusable dataset shared by evaluations or other workflows.
+Each iteration returned by `list_iterations()`, `get_iteration()`, or
+`get_best_iteration()` may include `toolDescriptions` (the optimized description keyed by
+tool name) and `selectionSystemPrompt` when system-prompt optimization is enabled.
 
 ## Tracing
 
@@ -133,7 +158,7 @@ This works with any package from the [opentelemetry-python-contrib](https://gith
 
 ### AI Components
 
-Use `ai_component()` to tag spans with a component name. The platform links traces to the matching AI Component in your workspace:
+Use `ai_component()` to tag spans with a component name. The platform links traces to the matching AI Component in your AI Application:
 
 ```python
 with promptic_sdk.ai_component("my-component"):
@@ -211,6 +236,15 @@ file_ref = promptic_sdk.artifact("/tmp/report.pdf")
 span.set_attribute("retrieval.input_file", file_ref.ref)
 ```
 
+The artifact's `name` is stored on the record and used as the default download
+filename. For local files it defaults to the file's base name; pass `name=` to
+override it (also available for bytes and text content), and read it back from
+`file_ref.name`:
+
+```python
+file_ref = promptic_sdk.artifact(pdf_bytes, name="quarterly-report.pdf")
+```
+
 For huge collections, still log a small preview plus a count rather than the
 full object:
 
@@ -249,7 +283,7 @@ Both clients provide typed methods for the full Promptic REST API:
 
 | Resource       | Methods                                                                 |
 | -------------- | ----------------------------------------------------------------------- |
-| Workspace      | `get_workspace`                                                         |
+| AI Application | `get_ai_application`                                                     |
 | Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
 | Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment` |
@@ -275,9 +309,9 @@ promptic [command] [subcommand] [options]
 | `promptic login`                       | Authenticate via browser (device flow) |
 | `promptic logout`                      | Clear saved credentials                |
 | `promptic configure`                   | Save API key and endpoint (CI/CD)      |
-| `promptic workspace list`              | List accessible workspaces             |
-| `promptic workspace select <id>`       | Select a workspace                     |
-| `promptic workspace info`              | Show workspace info                    |
+| `promptic ai-application list`         | List accessible AI Applications        |
+| `promptic ai-application select <id>`  | Select an AI Application                |
+| `promptic ai-application info`         | Show AI Application info                |
 | `promptic traces list`                 | List recent traces                     |
 | `promptic traces get <id>`             | Get a trace with spans                 |
 | `promptic traces artifacts <id>`       | List artifacts for a trace             |
@@ -289,6 +323,7 @@ promptic [command] [subcommand] [options]
 | `promptic components delete <id>`      | Delete a component                     |
 | `promptic experiments list`            | List experiments                       |
 | `promptic experiments create`          | Create an experiment (interactive)     |
+| `promptic experiments create-tool-selection` | Create a tool-selection experiment |
 | `promptic experiments get <id>`        | Get experiment details                 |
 | `promptic experiments update <id>`     | Update an experiment                   |
 | `promptic experiments delete <id>`     | Delete an experiment                   |

@@ -1,6 +1,6 @@
 """Tests for CLI config management."""
 
-from promptic_sdk.cli.config import load_config, save_config
+from promptic_sdk.cli.config import load_config, save_ai_application, save_config
 
 
 class TestConfig:
@@ -65,3 +65,39 @@ class TestConfig:
         save_config("pk_test", "https://test.com")
         # Check file is owner-only readable
         assert oct(config_file.stat().st_mode & 0o777) == "0o600"
+
+    def test_ai_application_env_takes_precedence_over_legacy_workspace_env(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        monkeypatch.setenv("PROMPTIC_AI_APPLICATION_ID", "app-current")
+        monkeypatch.setenv("PROMPTIC_WORKSPACE_ID", "app-legacy")
+        monkeypatch.setattr("promptic_sdk.cli.config._read_config_file", dict)
+
+        config = load_config()
+
+        assert config is not None
+        assert config.ai_application_id == "app-current"
+        assert config.workspace_id == "app-current"
+
+    def test_loads_legacy_workspace_id_from_config(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.setattr(
+            "promptic_sdk.cli.config._read_config_file",
+            lambda: {"workspace_id": "app-legacy"},
+        )
+
+        config = load_config()
+
+        assert config is not None
+        assert config.ai_application_id == "app-legacy"
+
+    def test_save_ai_application_replaces_legacy_key(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.toml"
+        monkeypatch.setattr("promptic_sdk.cli.config._CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("promptic_sdk.cli.config._CONFIG_FILE", config_file)
+        config_file.write_text('workspace_id = "app-legacy"\n')
+
+        save_ai_application("app-current")
+
+        assert config_file.read_text() == 'ai_application_id = "app-current"\n'

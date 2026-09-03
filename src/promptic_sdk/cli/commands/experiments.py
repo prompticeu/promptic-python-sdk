@@ -5,17 +5,48 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from promptic_sdk.cli import get_client
+from promptic_sdk.models import (
+    PromptExperimentTaskType,
+    ToolSelectionTestCase,
+    ToolSelectionTool,
+    ToolSource,
+)
 
 experiments_app = typer.Typer(help="Manage experiments.")
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _load_json_array(path: Path, *, option_name: str) -> list[dict[str, Any]]:
+    """Load a JSON array of objects for a CLI option."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"Could not read valid JSON from {path}: {exc}") from exc
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise typer.BadParameter(f"{option_name} must contain a JSON array of objects")
+    return value
+
+
+def _validate_tool_selection_tools(
+    tools: list[dict[str, Any]], *, option_name: str = "--tools"
+) -> None:
+    """Validate required tool fields before passing them to the SDK client."""
+    for index, tool in enumerate(tools):
+        for field in ("name", "description"):
+            value = tool.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise typer.BadParameter(
+                    f"{option_name}[{index}].{field} must be a non-empty string"
+                )
 
 
 @experiments_app.command("list")
@@ -77,7 +108,14 @@ def create_experiment(
     ] = None,
     task_type: Annotated[
         str | None,
-        typer.Option("--task-type", "-t", help="Task type (classification, generation, etc.)."),
+        typer.Option(
+            "--task-type",
+            "-t",
+            help=(
+                "Task type: classification, textGeneration, or structuredOutput. "
+                "Tool selection requires create_tool_selection_experiment()."
+            ),
+        ),
     ] = None,
     initial_prompt: Annotated[
         str | None, typer.Option("--initial-prompt", "-p", help="Initial prompt text.")
@@ -102,6 +140,12 @@ def create_experiment(
             "Task type",
             default="classification",
         )
+    supported_task_types = {"classification", "textGeneration", "structuredOutput"}
+    if task_type not in supported_task_types:
+        raise typer.BadParameter(
+            "--task-type must be classification, textGeneration, or structuredOutput; "
+            "tool selection requires create_tool_selection_experiment()"
+        )
     if not initial_prompt:
         initial_prompt = typer.prompt("Initial prompt", default="")
         if not initial_prompt:
@@ -111,7 +155,7 @@ def create_experiment(
         result = client.create_experiment(
             ai_component_id=component_id,
             target_model=target_model,
-            task_type=task_type,
+            task_type=cast("PromptExperimentTaskType", task_type),
             initial_prompt=initial_prompt,
             name=name,
             description=description,
@@ -128,6 +172,90 @@ def create_experiment(
     console.print(f"  Name:   {result['name'] or '-'}")
     console.print(f"  Model:  {result['targetModel']}")
     console.print(f"  Status: {result['experimentStatus']}")
+
+
+@experiments_app.command("create-tool-selection")
+def create_tool_selection_experiment(
+    component_id: Annotated[str, typer.Option("--component-id", "-c", help="AI component ID.")],
+    tools_file: Annotated[
+        Path,
+        typer.Option(
+            "--tools",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file containing tool definitions.",
+        ),
+    ],
+    test_cases_file: Annotated[
+        Path,
+        typer.Option(
+            "--test-cases",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file containing query and expected-tool cases.",
+        ),
+    ],
+    target_model: Annotated[
+        str | None, typer.Option("--target-model", "-m", help="Target model.")
+    ] = None,
+    tool_source: Annotated[str, typer.Option(help="Tool provenance: manual or mcp.")] = "manual",
+    system_prompt: Annotated[
+        str | None, typer.Option(help="Optional system prompt used during evaluation.")
+    ] = None,
+    optimize_system_prompt: bool = typer.Option(
+        False,
+        "--optimize-system-prompt",
+        help="Optimize the system prompt together with tool descriptions.",
+    ),
+    epochs: Annotated[int | None, typer.Option(min=1, max=5)] = None,
+    train_split_ratio: Annotated[
+        float | None,
+        typer.Option(min=0.5, max=0.9, help="Held-out evaluation split."),
+    ] = None,
+    name: Annotated[str | None, typer.Option(help="Experiment name.")] = None,
+    description: Annotated[str | None, typer.Option(help="Experiment description.")] = None,
+    start: bool = typer.Option(False, "--start", help="Start the experiment after creating it."),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Create a complete tool-selection optimization experiment."""
+    if tool_source not in {"manual", "mcp"}:
+        raise typer.BadParameter("--tool-source must be manual or mcp")
+
+    raw_tools = _load_json_array(tools_file, option_name="--tools")
+    _validate_tool_selection_tools(raw_tools)
+    tools = cast("list[ToolSelectionTool]", raw_tools)
+    test_cases = cast(
+        "list[ToolSelectionTestCase]",
+        _load_json_array(test_cases_file, option_name="--test-cases"),
+    )
+
+    with get_client() as client:
+        result = client.create_tool_selection_experiment(
+            component_id,
+            tools=tools,
+            test_cases=test_cases,
+            target_model=target_model,
+            tool_source=cast("ToolSource", tool_source),
+            system_prompt=system_prompt,
+            optimize_system_prompt=optimize_system_prompt,
+            epochs=epochs,
+            train_split_ratio=train_split_ratio,
+            name=name,
+            description=description,
+        )
+        if start:
+            client.start_experiment(result["id"])
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    console.print(f"[green]Tool-selection experiment created:[/green] {result['id']}")
+    if start:
+        console.print("[green]Experiment scheduled.[/green]")
 
 
 @experiments_app.command("get")
@@ -250,7 +378,7 @@ def _print_duplicated_experiment(result: Mapping[str, Any], *, source_id: str, k
     if result.get("modelUnavailable"):
         console.print(
             "[yellow]Warning:[/yellow] the source's target model is no longer "
-            "available in this workspace; update it before starting."
+            "available in this AI Application; update it before starting."
         )
 
 

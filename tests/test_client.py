@@ -1,10 +1,12 @@
 """Tests for the platform client."""
 
+import json
+
 import httpx
 import pytest
 
 from promptic_sdk.client import AsyncPrompticClient, PrompticClient
-from promptic_sdk.models import DatasetCaseCreate
+from promptic_sdk.models import DatasetCaseCreate, Iteration, ToolSelectionTool
 
 
 def _canonical_dataset_payload(*, include_cases: bool = False) -> dict:
@@ -347,6 +349,77 @@ class TestPrompticClient:
             client.duplicate_experiment("src", initial_prompt_override="hello world")
             assert b'"initialPromptOverride":"hello world"' in captured["body"]
 
+    def test_create_tool_selection_experiment(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        captured: dict = {}
+
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.method == "POST"
+                assert str(request.url).endswith("/experiments/tool-selection")
+                captured["body"] = json.loads(request.content)
+                return httpx.Response(201, json={"id": "exp_1", "taskType": "toolSelection"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            result = client.create_tool_selection_experiment(
+                "comp_1",
+                tools=[
+                    {"name": "search", "description": "find", "input_schema": {"type": "object"}}
+                ],
+                test_cases=[
+                    {"query": "find x", "expected_tool": "search"},
+                    {"query": "chit chat", "expectedTool": ""},
+                ],
+                system_prompt="be precise",
+                train_split_ratio=0.8,
+            )
+
+        assert result == {"id": "exp_1", "taskType": "toolSelection"}
+        body = captured["body"]
+        # snake_case inputs normalized to the API's camelCase shape
+        assert body["tools"] == [
+            {"name": "search", "description": "find", "inputSchema": {"type": "object"}}
+        ]
+        assert body["testCases"] == [
+            {"query": "find x", "expectedTool": "search"},
+            {"query": "chit chat", "expectedTool": ""},
+        ]
+        # defaults + passthrough
+        assert body["toolSource"] == "manual"
+        assert body["optimizeSystemPrompt"] is False
+        assert body["systemPrompt"] == "be precise"
+        assert body["trainSplitRatio"] == 0.8
+        # target_model omitted so the platform applies its default
+        assert "targetModel" not in body
+
+    def test_tool_selection_input_schema_is_optional_at_runtime(self):
+        assert "input_schema" in ToolSelectionTool.__optional_keys__
+        assert "input_schema" not in ToolSelectionTool.__required_keys__
+
+    def test_tool_selection_iteration_fields_are_optional_at_runtime(self):
+        assert "toolDescriptions" in Iteration.__optional_keys__
+        assert "selectionSystemPrompt" in Iteration.__optional_keys__
+        assert "toolDescriptions" not in Iteration.__required_keys__
+        assert "selectionSystemPrompt" not in Iteration.__required_keys__
+
+    def test_tool_selection_requires_expected_tool(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with (
+            PrompticClient() as client,
+            pytest.raises(ValueError, match="expected_tool or expectedTool"),
+        ):
+            client.create_tool_selection_experiment(
+                "comp_1",
+                tools=[{"name": "search", "description": "find"}],
+                test_cases=[{"query": "find x"}],  # type: ignore[typeddict-item]
+            )
+
 
 class TestAsyncPrompticClient:
     def test_requires_api_key(self):
@@ -539,3 +612,97 @@ class TestAsyncPrompticClient:
         assert result["id"] == "new-exp"
         assert "/experiments/src/duplicate" in captured["url"]
         assert b'"continueFromOptimized":true' in captured["body"]
+
+
+class TestAIApplicationScope:
+    """AI Application scope resolution, header, and endpoint."""
+
+    def test_ai_application_id_sets_header(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        client = PrompticClient(ai_application_id="app-1")
+        assert client._client.headers["X-AI-Application-Id"] == "app-1"
+        assert client.ai_application_id == "app-1"
+        # Deprecated attribute stays in sync.
+        assert client.workspace_id == "app-1"
+        client.close()
+
+    def test_deprecated_workspace_id_argument(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        client = PrompticClient(workspace_id="legacy-1")
+        assert client._client.headers["X-AI-Application-Id"] == "legacy-1"
+        assert client.ai_application_id == "legacy-1"
+        client.close()
+
+    def test_env_fallbacks(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+        monkeypatch.setenv("PROMPTIC_WORKSPACE_ID", "env-legacy")
+        client = PrompticClient()
+        assert client.ai_application_id == "env-legacy"
+        client.close()
+
+        monkeypatch.setenv("PROMPTIC_AI_APPLICATION_ID", "env-new")
+        client = PrompticClient()
+        # New env var wins over the legacy one.
+        assert client.ai_application_id == "env-new"
+        client.close()
+
+    def test_get_ai_application(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        with PrompticClient() as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert str(request.url).endswith("/ai-application")
+                return httpx.Response(200, json={"id": "app-1", "name": "App"})
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert client.get_ai_application()["id"] == "app-1"
+            # Deprecated alias hits the same endpoint.
+            assert client.get_workspace()["id"] == "app-1"
+
+
+class TestAsyncAIApplicationScope:
+    """Async AI Application scope resolution, header, and endpoint."""
+
+    async def test_ai_application_id_sets_header(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_ACCESS_TOKEN", "tok")
+        monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+        monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+
+        async with AsyncPrompticClient(ai_application_id="app-1") as client:
+            assert client._client.headers["X-AI-Application-Id"] == "app-1"
+            assert client.ai_application_id == "app-1"
+            assert client.workspace_id == "app-1"
+
+    async def test_get_ai_application_and_deprecated_alias(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        requests: list[httpx.Request] = []
+
+        async with AsyncPrompticClient() as client:
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                return httpx.Response(200, json={"id": "app-1", "name": "App"})
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert (await client.get_ai_application())["id"] == "app-1"
+            assert (await client.get_workspace())["id"] == "app-1"
+
+        assert [request.url.path for request in requests] == [
+            "/api/v1/ai-application",
+            "/api/v1/ai-application",
+        ]

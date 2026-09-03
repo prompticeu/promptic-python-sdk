@@ -5,6 +5,7 @@ from promptic_sdk.models import (
     AgentEvaluation,
     AgentEvaluationList,
     AgentEvaluationStatus,
+    AIApplication,
     Component,
     ComponentCreated,
     ComponentList,
@@ -40,12 +41,16 @@ from promptic_sdk.models import (
     JudgeResultList,
     ModelProvider,
     OptimizerType,
+    PromptExperimentTaskType,
     PromptFormat,
     PromptMessage,
     PromptMessageRole,
     Span,
     SpanEvent,
     TaskType,
+    ToolSelectionTestCase,
+    ToolSelectionTool,
+    ToolSource,
     Trace,
     TraceArtifact,
     TraceArtifactList,
@@ -64,7 +69,7 @@ from promptic_sdk.tracing import (
     init,
 )
 
-__version__ = "0.18.0"
+__version__ = "0.21.0"
 __all__ = [
     "AsyncPrompticClient",
     "PrompticClient",
@@ -80,6 +85,7 @@ __all__ = [
     "AgentEvaluation",
     "AgentEvaluationList",
     "AgentEvaluationStatus",
+    "AIApplication",
     "Component",
     "ComponentCreated",
     "ComponentList",
@@ -99,6 +105,7 @@ __all__ = [
     "JudgeResult",
     "JudgeResultList",
     "PromptFormat",
+    "PromptExperimentTaskType",
     "PromptMessage",
     "PromptMessageRole",
     "Evaluator",
@@ -121,11 +128,15 @@ __all__ = [
     "Span",
     "SpanEvent",
     "TaskType",
+    "ToolSelectionTestCase",
+    "ToolSelectionTool",
+    "ToolSource",
     "Trace",
     "TraceArtifact",
     "TraceArtifactList",
     "TraceList",
     "TraceListItem",
     "TracingStats",
+    # Deprecated alias for AIApplication
     "Workspace",
 ]

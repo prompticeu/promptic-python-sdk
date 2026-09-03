@@ -1035,6 +1035,120 @@ class TestArtifactUploader:
         assert [call[0] for call in fake_client.calls] == ["POST", "POST"]
         assert fake_client.calls[1][2]["json"]["contentBase64"] == "aGVsbG8="
 
+    def test_upload_sends_name_and_reads_it_from_response(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(status_code=404)
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "application/pdf",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                        "name": "report.pdf",
+                    }
+                )
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="application/pdf",
+                name="report.pdf",
+            )
+
+        assert ref is not None
+        assert ref.name == "report.pdf"
+        assert fake_client.calls[1][2]["json"]["name"] == "report.pdf"
+
+    def test_direct_upload_sends_name_in_register_body(self):
+        class FakeResponse:
+            def __init__(self, status_code=200, data=None):
+                self.status_code = status_code
+                self._data = data or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self._data
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                self.calls.append(("POST", url, kwargs))
+                if url.endswith("/storage-objects/presign"):
+                    return FakeResponse(
+                        data={
+                            "method": "PUT",
+                            "uploadUrl": "https://storage.example/upload",
+                            "storageObjectId": "storage-object-id",
+                        }
+                    )
+                return FakeResponse(
+                    data={
+                        "id": "artifact-id",
+                        "uri": "promptic-artifact://artifact-id",
+                        "mimeType": "application/pdf",
+                        "sizeBytes": 5,
+                        "sha256": "hash",
+                        "name": "report.pdf",
+                    }
+                )
+
+            def put(self, url, **kwargs):
+                self.calls.append(("PUT", url, kwargs))
+                return FakeResponse()
+
+        fake_client = FakeClient()
+        with patch("promptic_sdk.tracing.httpx.Client", return_value=fake_client):
+            ref = _ArtifactUploader(endpoint="https://api.example", api_key="pk").upload(
+                b"hello",
+                mime_type="application/pdf",
+                name="report.pdf",
+            )
+
+        assert ref is not None
+        assert ref.name == "report.pdf"
+        # The direct-upload registration request (third call) carries the name.
+        register_call = fake_client.calls[2]
+        assert register_call[1].endswith("/api/v1/artifacts")
+        assert register_call[2]["json"]["name"] == "report.pdf"
+        assert "storageObjectId" in register_call[2]["json"]
+
     def test_upload_falls_back_to_server_upload_when_presign_fails(self):
         class FakeResponse:
             def __init__(self, status_code=200, data=None):
@@ -1194,15 +1308,16 @@ class TestArtifactHelper:
         calls = []
 
         def fake_upload(
-            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
         ):
-            calls.append((content, mime_type, source_path, source_field, preview))
+            calls.append((content, mime_type, source_path, source_field, preview, name))
             return ArtifactReference(
                 id="artifact-id",
                 uri="promptic-artifact://artifact-id",
                 mime_type=mime_type,
                 size_bytes=len(content),
                 sha256="hash",
+                name=name,
             )
 
         monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
@@ -1210,7 +1325,37 @@ class TestArtifactHelper:
         ref = artifact(path)
 
         assert ref.id == "artifact-id"
-        assert calls == [(b"report body", "text/plain", str(path), "manual", "report body")]
+        # A local file's base name becomes the default artifact name.
+        assert ref.name == "report.txt"
+        assert calls == [
+            (b"report body", "text/plain", str(path), "manual", "report body", "report.txt")
+        ]
+
+    def test_explicit_name_overrides_file_basename(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+        path = tmp_path / "report.txt"
+        path.write_text("report body")
+        names = []
+
+        def fake_upload(
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
+        ):
+            names.append(name)
+            return ArtifactReference(
+                id="artifact-id",
+                uri="promptic-artifact://artifact-id",
+                mime_type=mime_type,
+                size_bytes=len(content),
+                sha256="hash",
+                name=name,
+            )
+
+        monkeypatch.setattr("promptic_sdk.tracing._ArtifactUploader.upload", fake_upload)
+
+        ref = artifact(path, name="quarterly-report.txt")
+
+        assert names == ["quarterly-report.txt"]
+        assert ref.name == "quarterly-report.txt"
 
     def test_missing_path_like_string_raises(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
@@ -1242,9 +1387,9 @@ class TestArtifactHelper:
         calls = []
 
         def fake_upload(
-            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
         ):
-            calls.append((content, mime_type, source_path, preview))
+            calls.append((content, mime_type, source_path, preview, name))
             return ArtifactReference(
                 id="artifact-id",
                 uri="promptic-artifact://artifact-id",
@@ -1258,7 +1403,8 @@ class TestArtifactHelper:
         ref = artifact("plain text content")
 
         assert ref.id == "artifact-id"
-        assert calls == [(b"plain text content", "text/plain", "$", "plain text content")]
+        # Inline text uploads carry no name by default.
+        assert calls == [(b"plain text content", "text/plain", "$", "plain text content", None)]
 
     @pytest.mark.parametrize("value", ["Use model gpt-4.1 in prod", "gpt-4.1"])
     def test_dotted_model_text_is_uploaded_as_text(self, monkeypatch, value):
@@ -1267,9 +1413,9 @@ class TestArtifactHelper:
         calls = []
 
         def fake_upload(
-            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
         ):
-            calls.append((content, mime_type, source_path, preview))
+            calls.append((content, mime_type, source_path, preview, name))
             return ArtifactReference(
                 id="artifact-id",
                 uri="promptic-artifact://artifact-id",
@@ -1283,7 +1429,7 @@ class TestArtifactHelper:
         ref = artifact(value)
 
         assert ref.id == "artifact-id"
-        assert calls == [(value.encode("utf-8"), "text/plain", "$", value)]
+        assert calls == [(value.encode("utf-8"), "text/plain", "$", value, None)]
 
     @pytest.mark.parametrize("value", ["Q: answer", "a:1"])
     def test_colon_prefixed_text_is_uploaded_as_text(self, monkeypatch, value):
@@ -1292,9 +1438,9 @@ class TestArtifactHelper:
         calls = []
 
         def fake_upload(
-            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
         ):
-            calls.append((content, mime_type, source_path, preview))
+            calls.append((content, mime_type, source_path, preview, name))
             return ArtifactReference(
                 id="artifact-id",
                 uri="promptic-artifact://artifact-id",
@@ -1308,7 +1454,7 @@ class TestArtifactHelper:
         ref = artifact(value)
 
         assert ref.id == "artifact-id"
-        assert calls == [(value.encode("utf-8"), "text/plain", "$", value)]
+        assert calls == [(value.encode("utf-8"), "text/plain", "$", value, None)]
 
     @pytest.mark.parametrize(
         "value",
@@ -1324,9 +1470,9 @@ class TestArtifactHelper:
         calls = []
 
         def fake_upload(
-            self, content, *, mime_type, source_path="$", source_field=None, preview=None
+            self, content, *, mime_type, source_path="$", source_field=None, preview=None, name=None
         ):
-            calls.append((content, mime_type, source_path, preview))
+            calls.append((content, mime_type, source_path, preview, name))
             return ArtifactReference(
                 id="artifact-id",
                 uri="promptic-artifact://artifact-id",
@@ -1346,6 +1492,7 @@ class TestArtifactHelper:
                 "text/plain",
                 "$",
                 value,
+                None,
             )
         ]
 

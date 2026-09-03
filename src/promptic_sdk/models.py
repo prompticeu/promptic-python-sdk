@@ -11,7 +11,9 @@ from typing_extensions import TypedDict
 ExperimentStatus = Literal["pending", "scheduled", "running", "completed", "failed"]
 ModelProvider = Literal["openai", "openrouter", "custom", "google"]
 OptimizerType = Literal["promptic", "prompticV2", "miproV2", "bootstrapFewShot", "gepa"]
-TaskType = Literal["classification", "textGeneration", "structuredOutput"]
+TaskType = Literal["classification", "textGeneration", "structuredOutput", "toolSelection"]
+PromptExperimentTaskType = Literal["classification", "textGeneration", "structuredOutput"]
+ToolSource = Literal["mcp", "manual"]
 EvaluatorType = Literal[
     "f1",
     "referenceJudge",
@@ -19,6 +21,7 @@ EvaluatorType = Literal[
     "generalJudge",
     "similarity",
     "structuredOutput",
+    "toolSelection",
 ]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
@@ -26,17 +29,22 @@ PromptFormat = Literal["single", "multi_message"]
 PromptMessageRole = Literal["system", "user", "assistant"]
 
 
-# ── Workspace ────────────────────────────────────────────────────────
+# ── AI Application ────────────────────────────────────────────────────
 
 
-class Workspace(TypedDict):
-    """Workspace info returned by the API."""
+class AIApplication(TypedDict):
+    """AI Application info returned by the API."""
 
     id: str
     name: str
     description: str | None
     createdAt: str
     updatedAt: str
+
+
+# Deprecated alias — kept for backward compatibility. ``AIApplication`` is the
+# customer-facing name for the same object.
+Workspace = AIApplication
 
 
 # ── Components ───────────────────────────────────────────────────────
@@ -49,7 +57,7 @@ class Component(TypedDict):
     name: str
     description: str | None
     costAnalysisConfig: dict[str, Any] | None
-    workspaceId: str
+    aiApplicationId: str
     createdAt: str
     updatedAt: str
 
@@ -78,8 +86,8 @@ class Hyperparameters(TypedDict, total=False):
     enableCot: bool
 
 
-class Experiment(TypedDict):
-    """Experiment record."""
+class _ExperimentRequired(TypedDict):
+    """Fields present on every experiment record."""
 
     id: str
     datasetId: str
@@ -109,6 +117,29 @@ class Experiment(TypedDict):
     updatedAt: str
 
 
+class Experiment(_ExperimentRequired, total=False):
+    """Experiment record.
+
+    The three ``*SystemPrompt`` fields only ship with the tool-selection
+    optimizer; older API responses (that predate those columns) omit them, so
+    they are optional. They live on this ``total=False`` subclass — rather than
+    as ``NotRequired`` markers on a single TypedDict — because this module uses
+    ``from __future__ import annotations``: under postponed evaluation the
+    ``NotRequired`` wrapper is stored as a string and the runtime metadata
+    (``__required_keys__`` / ``__optional_keys__``) would wrongly treat the
+    fields as required. The base/extension split keeps the optionality correct
+    at runtime for anyone introspecting the model.
+    """
+
+    # Tool-selection experiments only. ``systemPrompt`` is the fixed system
+    # prompt used as context during evaluation. ``optimizeSystemPrompt`` is
+    # the toggle that asks the optimizer to also rewrite the system prompt;
+    # when on, the best variant is persisted as ``optimizedSystemPrompt``.
+    systemPrompt: str | None
+    optimizeSystemPrompt: bool
+    optimizedSystemPrompt: str | None
+
+
 class ExperimentList(TypedDict):
     """Paginated list of experiments."""
 
@@ -120,6 +151,33 @@ class ExperimentStarted(TypedDict):
 
     messageId: str
     status: str
+
+
+class _ToolSelectionToolRequired(TypedDict):
+    """Tool definition used by tool-selection optimization."""
+
+    name: str
+    description: str
+
+
+class ToolSelectionTool(_ToolSelectionToolRequired, total=False):
+    """Tool definition with optional snake- or camel-case input schema."""
+
+    input_schema: dict[str, Any]
+    inputSchema: dict[str, Any]
+
+
+class _SnakeCaseToolSelectionTestCase(TypedDict):
+    query: str
+    expected_tool: str
+
+
+class _CamelCaseToolSelectionTestCase(TypedDict):
+    query: str
+    expectedTool: str
+
+
+ToolSelectionTestCase: TypeAlias = _SnakeCaseToolSelectionTestCase | _CamelCaseToolSelectionTestCase
 
 
 # ── Evaluators ───────────────────────────────────────────────────────
@@ -167,14 +225,24 @@ class _IterationOptional(TypedDict, total=False):
     # shipped.
     avgPredictionLatencyMs: int | None
 
+    # Tool-selection only: the optimized description for each tool in this
+    # iteration, keyed by tool name. The API returns null or omits the field
+    # for other task types and historical iterations.
+    toolDescriptions: dict[str, str] | None
+
+    # Tool-selection only: the system prompt used for selection in this
+    # iteration after evaluation-only guardrails have been removed. It is null
+    # or omitted unless system-prompt optimization is enabled.
+    selectionSystemPrompt: str | None
+
 
 class Iteration(_IterationOptional):
     """Experiment iteration record.
 
     All keys below are populated by every iteration response. The
-    optional ``avgPredictionLatencyMs`` key (inherited from
-    ``_IterationOptional``) is absent on iterations completed before
-    per-prediction latency tracking shipped.
+    Task-specific and historically unavailable keys are inherited from
+    ``_IterationOptional`` so callers can safely handle payloads that omit
+    them.
     """
 
     id: int
@@ -352,7 +420,7 @@ class TraceArtifact(TypedDict):
     """Artifact referenced from a trace or uploaded explicitly."""
 
     id: str
-    workspaceId: str
+    aiApplicationId: str
     traceDbId: str | None
     spanDbId: str | None
     traceId: str | None
@@ -360,6 +428,7 @@ class TraceArtifact(TypedDict):
     sourcePath: str
     sourceField: str
     source: str
+    name: NotRequired[str | None]
     mimeType: str
     sizeBytes: int
     sha256: str

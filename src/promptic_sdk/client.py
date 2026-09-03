@@ -8,7 +8,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from typing_extensions import Unpack
@@ -16,6 +16,7 @@ from typing_extensions import Unpack
 from promptic_sdk.models import (
     AgentEvaluation,
     AgentEvaluationList,
+    AIApplication,
     Annotation,
     AnnotationList,
     Component,
@@ -39,15 +40,18 @@ from promptic_sdk.models import (
     IterationList,
     IterationWithScores,
     JudgeResultList,
+    PromptExperimentTaskType,
     Run,
     RunList,
     RunWithTraces,
+    ToolSelectionTestCase,
+    ToolSelectionTool,
+    ToolSource,
     Trace,
     TraceArtifact,
     TraceArtifactList,
     TraceList,
     TracingStats,
-    Workspace,
 )
 
 _DEFAULT_ENDPOINT = "https://promptic.eu"
@@ -84,6 +88,70 @@ class PrompticAPIError(Exception):
         super().__init__(f"[{status_code}] {message}")
 
 
+def _normalize_tool_selection_tool(tool: ToolSelectionTool) -> dict[str, Any]:
+    """Normalize a tool definition to the API shape.
+
+    Accepts ``input_schema`` (snake) or ``inputSchema`` (camel); both are sent
+    as ``inputSchema``.
+    """
+    out: dict[str, Any] = {"name": tool["name"], "description": tool["description"]}
+    schema = tool.get("input_schema", tool.get("inputSchema"))
+    if schema is not None:
+        out["inputSchema"] = schema
+    return out
+
+
+def _normalize_tool_selection_test_case(test_case: ToolSelectionTestCase) -> dict[str, Any]:
+    """Normalize a test case to the API shape.
+
+    Accepts ``expected_tool`` (snake) or ``expectedTool`` (camel). Use an empty
+    string (or ``"none"``) for queries that should trigger no tool.
+    """
+    raw = cast("dict[str, Any]", test_case)
+    if "expected_tool" not in raw and "expectedTool" not in raw:
+        msg = "Tool-selection test cases require expected_tool or expectedTool"
+        raise ValueError(msg)
+    expected = raw["expected_tool"] if "expected_tool" in raw else raw["expectedTool"]
+    return {"query": test_case["query"], "expectedTool": expected}
+
+
+def _tool_selection_body(
+    ai_component_id: str,
+    tools: list[ToolSelectionTool],
+    test_cases: list[ToolSelectionTestCase],
+    *,
+    target_model: str | None,
+    tool_source: ToolSource,
+    system_prompt: str | None,
+    optimize_system_prompt: bool,
+    epochs: int | None,
+    train_split_ratio: float | None,
+    name: str | None,
+    description: str | None,
+) -> dict[str, Any]:
+    """Build the request body shared by the sync and async clients."""
+    body: dict[str, Any] = {
+        "aiComponentId": ai_component_id,
+        "tools": [_normalize_tool_selection_tool(t) for t in tools],
+        "testCases": [_normalize_tool_selection_test_case(tc) for tc in test_cases],
+        "toolSource": tool_source,
+        "optimizeSystemPrompt": optimize_system_prompt,
+    }
+    if target_model is not None:
+        body["targetModel"] = target_model
+    if system_prompt is not None:
+        body["systemPrompt"] = system_prompt
+    if epochs is not None:
+        body["epochs"] = epochs
+    if train_split_ratio is not None:
+        body["trainSplitRatio"] = train_split_ratio
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    return body
+
+
 @dataclass
 class PrompticClient:
     """Client for interacting with the Promptic platform API.
@@ -92,7 +160,9 @@ class PrompticClient:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
         access_token: Session token from device auth login. Falls back to
             ``PROMPTIC_ACCESS_TOKEN`` env var.
-        workspace_id: Workspace ID for session-based auth. Falls back to
+        ai_application_id: AI Application ID for session-based auth. Falls back to
+            ``PROMPTIC_AI_APPLICATION_ID`` env var.
+        workspace_id: Deprecated alias for ``ai_application_id``. Falls back to
             ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
             then to ``https://promptic.eu``.
@@ -101,6 +171,7 @@ class PrompticClient:
 
     api_key: str | None = None
     access_token: str | None = None
+    ai_application_id: str | None = None
     workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
@@ -110,7 +181,16 @@ class PrompticClient:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
         self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
-        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        # Resolve the AI Application scope, accepting the deprecated ``workspace_id``
+        # argument and env var for backward compatibility.
+        self.ai_application_id = (
+            self.ai_application_id
+            or self.workspace_id
+            or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+            or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        )
+        # Keep the deprecated attribute in sync so existing readers still work.
+        self.workspace_id = self.ai_application_id
 
         if not self.api_key and not self.access_token:
             msg = (
@@ -128,8 +208,8 @@ class PrompticClient:
         auth_headers: dict[str, str] = {}
         if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
-            if self.workspace_id:
-                auth_headers["X-Workspace-Id"] = self.workspace_id
+            if self.ai_application_id:
+                auth_headers["X-AI-Application-Id"] = self.ai_application_id
         elif self.api_key:
             auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -242,16 +322,20 @@ class PrompticClient:
         """Get aggregated tracing stats."""
         return self._get("/traces/stats", params={"days_back": days_back})
 
-    # ── Workspace ────────────────────────────────────────────────────
+    # ── AI Application ───────────────────────────────────────────────
 
-    def get_workspace(self) -> Workspace:
-        """Get workspace info for the current API key."""
-        return self._get("/workspace")
+    def get_ai_application(self) -> AIApplication:
+        """Get AI Application info for the current API key."""
+        return self._get("/ai-application")
+
+    def get_workspace(self) -> AIApplication:
+        """Deprecated alias for :meth:`get_ai_application`."""
+        return self.get_ai_application()
 
     # ── Components ───────────────────────────────────────────────────
 
     def list_components(self) -> ComponentList:
-        """List all AI components in the workspace."""
+        """List all AI components in the AI Application."""
         return self._get("/components")
 
     def create_component(self, name: str, *, description: str | None = None) -> ComponentCreated:
@@ -292,7 +376,7 @@ class PrompticClient:
         ai_component_id: str,
         target_model: str,
         *,
-        task_type: str = "classification",
+        task_type: PromptExperimentTaskType = "classification",
         initial_prompt: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -321,6 +405,69 @@ class PrompticClient:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
         return self._post("/experiments", json=body)
 
+    def create_tool_selection_experiment(
+        self,
+        ai_component_id: str,
+        *,
+        tools: list[ToolSelectionTool],
+        test_cases: list[ToolSelectionTestCase],
+        target_model: str | None = None,
+        tool_source: ToolSource = "manual",
+        system_prompt: str | None = None,
+        optimize_system_prompt: bool = False,
+        epochs: int | None = None,
+        train_split_ratio: float | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Experiment:
+        """Create a tool-selection ("toolSelection") experiment.
+
+        Creates the experiment together with its tool definitions, test cases,
+        and the tool-selection scorer in one call. The optimizer rewrites the
+        tool descriptions (and, optionally, the system prompt) so the target
+        model routes each query to the expected tool. The experiment is created
+        pending — call ``start_experiment`` to run it.
+
+        Args:
+            ai_component_id: AI component the experiment belongs to.
+            tools: Tool definitions, each ``{"name", "description"}`` with an
+                optional ``input_schema`` (or ``inputSchema``). At least one.
+            test_cases: Each ``{"query", "expected_tool"}`` (or ``expectedTool``).
+                Use an empty string (or ``"none"``) for the expected tool when the
+                query should trigger no tool. At least one.
+            target_model: Model whose tool selection is optimized. When omitted,
+                the platform applies its default.
+            tool_source: Provenance of the tool definitions — ``"manual"``
+                (supplied directly, the default) or ``"mcp"`` (fetched from an
+                MCP server).
+            system_prompt: Optional fixed system prompt used as context during
+                evaluation.
+            optimize_system_prompt: When True, the optimizer rewrites the system
+                prompt alongside the tool descriptions.
+            epochs: Optional number of optimization rounds.
+            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+                Omit to train and score on all test cases.
+            name: Optional experiment name.
+            description: Optional experiment description.
+
+        Returns:
+            The newly created (pending) experiment.
+        """
+        body = _tool_selection_body(
+            ai_component_id,
+            tools,
+            test_cases,
+            target_model=target_model,
+            tool_source=tool_source,
+            system_prompt=system_prompt,
+            optimize_system_prompt=optimize_system_prompt,
+            epochs=epochs,
+            train_split_ratio=train_split_ratio,
+            name=name,
+            description=description,
+        )
+        return self._post("/experiments/tool-selection", json=body)
+
     def get_experiment(self, experiment_id: str) -> Experiment:
         """Get an experiment by ID."""
         return self._get(f"/experiments/{experiment_id}")
@@ -343,7 +490,7 @@ class PrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         return self._post(f"/experiments/{experiment_id}/start")
@@ -373,7 +520,7 @@ class PrompticClient:
         Returns:
             The newly created experiment (with a ``modelUnavailable`` flag
             set when the source's target model is no longer available in
-            the workspace).
+            the AI Application).
         """
         body: dict[str, Any] = {}
         if continue_from_optimized:
@@ -592,7 +739,7 @@ class PrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         body: dict[str, Any] = {"datasetId": dataset_id}
@@ -678,7 +825,9 @@ class AsyncPrompticClient:
         api_key: Promptic API key. Falls back to ``PROMPTIC_API_KEY`` env var.
         access_token: Session token from device auth login. Falls back to
             ``PROMPTIC_ACCESS_TOKEN`` env var.
-        workspace_id: Workspace ID for session-based auth. Falls back to
+        ai_application_id: AI Application ID for session-based auth. Falls back to
+            ``PROMPTIC_AI_APPLICATION_ID`` env var.
+        workspace_id: Deprecated alias for ``ai_application_id``. Falls back to
             ``PROMPTIC_WORKSPACE_ID`` env var.
         endpoint: Promptic platform URL. Falls back to ``PROMPTIC_ENDPOINT`` env var,
             then to ``https://promptic.eu``.
@@ -687,6 +836,7 @@ class AsyncPrompticClient:
 
     api_key: str | None = None
     access_token: str | None = None
+    ai_application_id: str | None = None
     workspace_id: str | None = None
     endpoint: str | None = None
     timeout: float = 30.0
@@ -696,7 +846,16 @@ class AsyncPrompticClient:
         """Initialize the HTTP client."""
         self.api_key = self.api_key or os.environ.get("PROMPTIC_API_KEY")
         self.access_token = self.access_token or os.environ.get("PROMPTIC_ACCESS_TOKEN")
-        self.workspace_id = self.workspace_id or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        # Resolve the AI Application scope, accepting the deprecated ``workspace_id``
+        # argument and env var for backward compatibility.
+        self.ai_application_id = (
+            self.ai_application_id
+            or self.workspace_id
+            or os.environ.get("PROMPTIC_AI_APPLICATION_ID")
+            or os.environ.get("PROMPTIC_WORKSPACE_ID")
+        )
+        # Keep the deprecated attribute in sync so existing readers still work.
+        self.workspace_id = self.ai_application_id
 
         if not self.api_key and not self.access_token:
             msg = (
@@ -714,8 +873,8 @@ class AsyncPrompticClient:
         auth_headers: dict[str, str] = {}
         if self.access_token:
             auth_headers["Authorization"] = f"Bearer {self.access_token}"
-            if self.workspace_id:
-                auth_headers["X-Workspace-Id"] = self.workspace_id
+            if self.ai_application_id:
+                auth_headers["X-AI-Application-Id"] = self.ai_application_id
         elif self.api_key:
             auth_headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -817,16 +976,20 @@ class AsyncPrompticClient:
         """Get aggregated tracing stats."""
         return await self._get("/traces/stats", params={"days_back": days_back})
 
-    # ── Workspace ────────────────────────────────────────────────────
+    # ── AI Application ───────────────────────────────────────────────
 
-    async def get_workspace(self) -> Workspace:
-        """Get workspace info for the current API key."""
-        return await self._get("/workspace")
+    async def get_ai_application(self) -> AIApplication:
+        """Get AI Application info for the current API key."""
+        return await self._get("/ai-application")
+
+    async def get_workspace(self) -> AIApplication:
+        """Deprecated alias for :meth:`get_ai_application`."""
+        return await self.get_ai_application()
 
     # ── Components ───────────────────────────────────────────────────
 
     async def list_components(self) -> ComponentList:
-        """List all AI components in the workspace."""
+        """List all AI components in the AI Application."""
         return await self._get("/components")
 
     async def create_component(
@@ -869,7 +1032,7 @@ class AsyncPrompticClient:
         ai_component_id: str,
         target_model: str,
         *,
-        task_type: str = "classification",
+        task_type: PromptExperimentTaskType = "classification",
         initial_prompt: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -898,6 +1061,69 @@ class AsyncPrompticClient:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
         return await self._post("/experiments", json=body)
 
+    async def create_tool_selection_experiment(
+        self,
+        ai_component_id: str,
+        *,
+        tools: list[ToolSelectionTool],
+        test_cases: list[ToolSelectionTestCase],
+        target_model: str | None = None,
+        tool_source: ToolSource = "manual",
+        system_prompt: str | None = None,
+        optimize_system_prompt: bool = False,
+        epochs: int | None = None,
+        train_split_ratio: float | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Experiment:
+        """Create a tool-selection ("toolSelection") experiment.
+
+        Creates the experiment together with its tool definitions, test cases,
+        and the tool-selection scorer in one call. The optimizer rewrites the
+        tool descriptions (and, optionally, the system prompt) so the target
+        model routes each query to the expected tool. The experiment is created
+        pending — call ``start_experiment`` to run it.
+
+        Args:
+            ai_component_id: AI component the experiment belongs to.
+            tools: Tool definitions, each ``{"name", "description"}`` with an
+                optional ``input_schema`` (or ``inputSchema``). At least one.
+            test_cases: Each ``{"query", "expected_tool"}`` (or ``expectedTool``).
+                Use an empty string (or ``"none"``) for the expected tool when the
+                query should trigger no tool. At least one.
+            target_model: Model whose tool selection is optimized. When omitted,
+                the platform applies its default.
+            tool_source: Provenance of the tool definitions — ``"manual"``
+                (supplied directly, the default) or ``"mcp"`` (fetched from an
+                MCP server).
+            system_prompt: Optional fixed system prompt used as context during
+                evaluation.
+            optimize_system_prompt: When True, the optimizer rewrites the system
+                prompt alongside the tool descriptions.
+            epochs: Optional number of optimization rounds.
+            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+                Omit to train and score on all test cases.
+            name: Optional experiment name.
+            description: Optional experiment description.
+
+        Returns:
+            The newly created (pending) experiment.
+        """
+        body = _tool_selection_body(
+            ai_component_id,
+            tools,
+            test_cases,
+            target_model=target_model,
+            tool_source=tool_source,
+            system_prompt=system_prompt,
+            optimize_system_prompt=optimize_system_prompt,
+            epochs=epochs,
+            train_split_ratio=train_split_ratio,
+            name=name,
+            description=description,
+        )
+        return await self._post("/experiments/tool-selection", json=body)
+
     async def get_experiment(self, experiment_id: str) -> Experiment:
         """Get an experiment by ID."""
         return await self._get(f"/experiments/{experiment_id}")
@@ -915,7 +1141,7 @@ class AsyncPrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         return await self._post(f"/experiments/{experiment_id}/start")
@@ -945,7 +1171,7 @@ class AsyncPrompticClient:
         Returns:
             The newly created experiment (with a ``modelUnavailable`` flag
             set when the source's target model is no longer available in
-            the workspace).
+            the AI Application).
         """
         body: dict[str, Any] = {}
         if continue_from_optimized:
@@ -1157,7 +1383,7 @@ class AsyncPrompticClient:
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
-                workspace's organization has no active subscription and payment
+                AI Application's organization has no active subscription and payment
                 method, or is blocked by the free-tier limit.
         """
         body: dict[str, Any] = {"datasetId": dataset_id}

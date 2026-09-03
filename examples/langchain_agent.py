@@ -13,7 +13,7 @@ Run with:
 
 Environment variables:
     OPENAI_API_KEY      - Your OpenAI API key
-    PROMPTIC_API_KEY    - Your Promptic API key (from workspace settings)
+    PROMPTIC_API_KEY    - Your Promptic API key (from AI Application settings)
     PROMPTIC_ENDPOINT   - (optional) defaults to https://promptic.eu
 """
 
@@ -38,7 +38,7 @@ def get_weather(city: str) -> str:
 agent = create_agent("openai:gpt-4.1-nano", tools=[get_weather])
 
 # 4. Run the agent — all LLM calls are automatically traced to Promptic.
-#    Use ai_component() to link traces to a specific AI Component in your workspace.
+#    Use ai_component() to link traces to a specific AI Component in your AI Application.
 with promptic_sdk.ai_component("weather-agent"):
     result = agent.invoke({"messages": [("user", "What's the weather in Vienna?")]})
 

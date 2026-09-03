@@ -3,8 +3,11 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
+from promptic_sdk.cli.commands.experiments import _load_json_array
 from promptic_sdk.cli.config import CliConfig
 from promptic_sdk.cli.main import app
 
@@ -272,3 +275,149 @@ class TestExperimentsCommands:
             result = runner.invoke(app, ["experiments", "continue", "src-exp-id"])
             assert result.exit_code == 0
             assert "no longer available" in result.stdout
+
+    def test_create_tool_selection_from_json_files(self, tmp_path):
+        tools_file = tmp_path / "tools.json"
+        tools_file.write_text(json.dumps([{"name": "search", "description": "Search documents"}]))
+        cases_file = tmp_path / "cases.json"
+        cases_file.write_text(
+            json.dumps([{"query": "Find the invoice", "expected_tool": "search"}])
+        )
+        payload = {
+            "id": "tool-exp-id",
+            "name": "Tool routing",
+            "experimentStatus": "pending",
+            "targetModel": "gpt-4.1-nano",
+        }
+
+        with (
+            _mock_config(),
+            _mock_client("experiments", "create_tool_selection_experiment", payload) as patched,
+        ):
+            client = patched.return_value
+            client.start_experiment.return_value = {"status": "scheduled"}
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "create-tool-selection",
+                    "--component-id",
+                    "component-id",
+                    "--tools",
+                    str(tools_file),
+                    "--test-cases",
+                    str(cases_file),
+                    "--target-model",
+                    "gpt-4.1-nano",
+                    "--system-prompt",
+                    "Choose carefully.",
+                    "--optimize-system-prompt",
+                    "--epochs",
+                    "4",
+                    "--train-split-ratio",
+                    "0.8",
+                    "--start",
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["id"] == "tool-exp-id"
+        client.create_tool_selection_experiment.assert_called_once_with(
+            "component-id",
+            tools=[{"name": "search", "description": "Search documents"}],
+            test_cases=[{"query": "Find the invoice", "expected_tool": "search"}],
+            target_model="gpt-4.1-nano",
+            tool_source="manual",
+            system_prompt="Choose carefully.",
+            optimize_system_prompt=True,
+            epochs=4,
+            train_split_ratio=0.8,
+            name=None,
+            description=None,
+        )
+        client.start_experiment.assert_called_once_with("tool-exp-id")
+
+    def test_create_tool_selection_rejects_non_array_tools(self, tmp_path):
+        tools_file = tmp_path / "tools.json"
+        tools_file.write_text(json.dumps({"name": "search"}))
+        cases_file = tmp_path / "cases.json"
+        cases_file.write_text(json.dumps([]))
+
+        with _mock_config():
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "create-tool-selection",
+                    "--component-id",
+                    "component-id",
+                    "--tools",
+                    str(tools_file),
+                    "--test-cases",
+                    str(cases_file),
+                ],
+                terminal_width=200,
+            )
+
+        assert result.exit_code == 2
+
+        with pytest.raises(
+            typer.BadParameter, match="--tools must contain a JSON array of objects"
+        ):
+            _load_json_array(tools_file, option_name="--tools")
+
+    def test_create_tool_selection_rejects_missing_tool_description(self, tmp_path):
+        tools_file = tmp_path / "tools.json"
+        tools_file.write_text(json.dumps([{"name": "search"}]))
+        cases_file = tmp_path / "cases.json"
+        cases_file.write_text(
+            json.dumps([{"query": "Find the invoice", "expected_tool": "search"}])
+        )
+
+        with _mock_config():
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "create-tool-selection",
+                    "--component-id",
+                    "component-id",
+                    "--tools",
+                    str(tools_file),
+                    "--test-cases",
+                    str(cases_file),
+                ],
+            )
+
+        assert result.exit_code == 2
+
+
+class TestIterationsCommands:
+    def test_get_displays_tool_selection_outputs(self):
+        payload = {
+            "id": 7,
+            "experimentId": "tool-exp-id",
+            "iterationNumber": 2,
+            "prompt": "",
+            "promptTokens": 12,
+            "overallNormalizedScore": 0.9,
+            "evalNormalizedScore": 0.8,
+            "schemaSnapshot": None,
+            "toolDescriptions": {
+                "search[archive]": "Search [indexed] invoices and preserve broken[/] markup."
+            },
+            "selectionSystemPrompt": "Use [tools] only when needed; never parse broken[/] markup.",
+            "createdAt": "2026-09-03T00:00:00Z",
+            "updatedAt": "2026-09-03T00:00:00Z",
+            "scores": [],
+        }
+        with _mock_config(), _mock_client("iterations", "get_iteration", payload):
+            result = runner.invoke(app, ["iterations", "get", "tool-exp-id", "7"])
+
+        assert result.exit_code == 0
+        assert "Tool Descriptions" in result.stdout
+        assert "search[archive]" in result.stdout
+        assert "Search [indexed] invoices and preserve broken[/] markup." in result.stdout
+        assert "Selection System Prompt" in result.stdout
+        assert "Use [tools] only when needed; never parse broken[/] markup." in result.stdout

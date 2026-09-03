@@ -23,6 +23,6 @@ def get_client() -> PrompticClient:
     return PrompticClient(
         api_key=config.api_key,
         access_token=config.access_token,
-        workspace_id=config.workspace_id,
+        ai_application_id=config.ai_application_id,
         endpoint=config.endpoint,
     )

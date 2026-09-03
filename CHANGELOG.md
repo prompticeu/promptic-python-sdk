@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.21.0 (2026-09-03)
+
+## Features
+
+- Adopted “AI Application” terminology across the public client API.
+
+## Bug Fixes
+
+- Exposed tool-selection iteration outputs from models.
+
+
+## v0.20.0 (2026-08-27)
+
+## Features
+
+- Added a typed tool-selection workflow for experiments.
+
+
+## v0.19.0 (2026-08-06)
+
+## Features
+
+- Added support for specifying an artifact name in tracing.
+
+## Bug Fixes
+
+- Improved cleanup handling for superseded releases.
+
+
 ## v0.18.0 (2026-07-31)
 
 ## Features

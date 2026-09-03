@@ -8,6 +8,7 @@ import sys
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from promptic_sdk.cli import get_client
 from promptic_sdk.models import IterationWithScores
@@ -109,6 +110,21 @@ def _print_iteration(it: IterationWithScores) -> None:
     if prompt:
         preview = prompt[:200]
         console.print(f"\n[bold]Prompt:[/bold]\n{preview}{'...' if len(prompt) > 200 else ''}")
+
+    tool_descriptions = it.get("toolDescriptions")
+    if tool_descriptions:
+        console.print("\n[bold]Tool Descriptions:[/bold]")
+        table = Table()
+        table.add_column("Tool", style="cyan")
+        table.add_column("Description")
+        for tool_name, description in tool_descriptions.items():
+            table.add_row(Text(tool_name), Text(description))
+        console.print(table)
+
+    selection_system_prompt = it.get("selectionSystemPrompt")
+    if selection_system_prompt:
+        console.print("\n[bold]Selection System Prompt:[/bold]")
+        console.print(Text(selection_system_prompt))
 
     scores = it.get("scores", [])
     if scores:

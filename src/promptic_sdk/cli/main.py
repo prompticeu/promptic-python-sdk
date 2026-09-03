@@ -7,6 +7,7 @@ import sys
 import typer
 from rich.console import Console
 
+from promptic_sdk.cli.commands.ai_application import ai_application_app
 from promptic_sdk.cli.commands.annotations import annotations_app
 from promptic_sdk.cli.commands.artifacts import artifacts_app
 from promptic_sdk.cli.commands.components import components_app
@@ -20,7 +21,6 @@ from promptic_sdk.cli.commands.iterations import iterations_app
 from promptic_sdk.cli.commands.login import login, logout
 from promptic_sdk.cli.commands.runs import runs_app
 from promptic_sdk.cli.commands.traces import traces_app
-from promptic_sdk.cli.commands.workspace import workspace_app
 
 app = typer.Typer(
     name="promptic",
@@ -33,7 +33,9 @@ app.command("logout")(logout)
 app.command("configure")(configure)
 app.add_typer(traces_app, name="traces")
 app.add_typer(artifacts_app, name="artifacts")
-app.add_typer(workspace_app, name="workspace")
+app.add_typer(ai_application_app, name="ai-application")
+# Deprecated alias for ``ai-application``.
+app.add_typer(ai_application_app, name="workspace", hidden=True)
 app.add_typer(components_app, name="components")
 app.add_typer(experiments_app, name="experiments")
 app.add_typer(evaluators_app, name="evaluators")

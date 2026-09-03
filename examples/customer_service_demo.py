@@ -24,7 +24,7 @@ Run with:
 
 Environment variables:
     OPENAI_API_KEY      - Your OpenAI API key
-    PROMPTIC_API_KEY    - Your Promptic API key (from workspace settings)
+    PROMPTIC_API_KEY    - Your Promptic API key (from AI Application settings)
     PROMPTIC_ENDPOINT   - (optional) defaults to https://promptic.eu
 """
 

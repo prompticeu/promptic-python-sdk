@@ -268,6 +268,7 @@ class ArtifactReference:
     mime_type: str
     size_bytes: int
     sha256: str
+    name: str | None = None
 
     @property
     def ref(self) -> str:
@@ -304,6 +305,7 @@ class _ArtifactUploader:
         source_field: str | None,
         preview: str | None,
         sha256: str,
+        name: str | None,
     ) -> dict[str, Any] | None:
         filename = _source_path_name(source_path)
         if "." not in filename:
@@ -360,6 +362,7 @@ class _ArtifactUploader:
             headers={"Authorization": f"Bearer {self._api_key}"},
             json={
                 "storageObjectId": storage_object_id,
+                "name": name,
                 "mimeType": mime_type,
                 "sizeBytes": len(content),
                 "sha256": sha256,
@@ -380,6 +383,7 @@ class _ArtifactUploader:
         source_path: str = "$",
         source_field: str | None = None,
         preview: str | None = None,
+        name: str | None = None,
     ) -> ArtifactReference | None:
         if len(content) > _MAX_ARTIFACT_BYTES:
             logger.warning(
@@ -402,6 +406,7 @@ class _ArtifactUploader:
                         source_field=source_field,
                         preview=preview,
                         sha256=sha256,
+                        name=name,
                     )
                 except Exception:
                     logger.warning(
@@ -415,6 +420,7 @@ class _ArtifactUploader:
                         headers={"Authorization": f"Bearer {self._api_key}"},
                         json={
                             "contentBase64": base64.b64encode(content).decode("ascii"),
+                            "name": name,
                             "mimeType": mime_type,
                             "sourcePath": source_path,
                             "sourceField": source_field or _artifact_source_field(source_path),
@@ -444,6 +450,7 @@ class _ArtifactUploader:
             size_bytes = len(content)
         raw_mime_type = data.get("mimeType")
         raw_sha256 = data.get("sha256")
+        raw_name = data.get("name")
 
         return ArtifactReference(
             id=str(artifact_id),
@@ -451,6 +458,7 @@ class _ArtifactUploader:
             mime_type=raw_mime_type if isinstance(raw_mime_type, str) else mime_type,
             size_bytes=size_bytes,
             sha256=raw_sha256 if isinstance(raw_sha256, str) else sha256,
+            name=raw_name if isinstance(raw_name, str) else name,
         )
 
 
@@ -808,6 +816,7 @@ class _ComponentAttributeProcessor(SpanProcessor):
 def artifact(
     value: str | bytes | Path,
     *,
+    name: str | None = None,
     mime_type: str | None = None,
     api_key: str | None = None,
     endpoint: str | None = None,
@@ -816,6 +825,10 @@ def artifact(
 
     Local files are explicit on purpose: the SDK does not silently read paths
     that happen to appear in span attributes.
+
+    ``name`` is stored on the artifact and used as the default download
+    filename. When ``value`` is a local file path and ``name`` is not given, the
+    file's base name is used.
 
     Example::
 
@@ -838,6 +851,8 @@ def artifact(
             mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         )
         source_path = str(path)
+        if name is None:
+            name = path.name
     elif isinstance(value, bytes):
         content = value
         resolved_mime_type = mime_type or "application/octet-stream"
@@ -864,6 +879,7 @@ def artifact(
         preview=_preview_text(content.decode("utf-8", errors="ignore"))
         if resolved_mime_type.startswith("text/")
         else None,
+        name=name,
     )
     if ref is None:
         msg = "Failed to upload artifact to Promptic."
@@ -1010,11 +1026,11 @@ def ai_component(
 ) -> Iterator[None]:
     """Tag all spans created within this context with an AI Component name.
 
-    The server matches the name against AI Components in the workspace
+    The server matches the name against AI Components in the AI Application
     and links traces accordingly.
 
     Args:
-        name: AI Component name in the workspace.
+        name: AI Component name in the AI Application.
         dataset_id: Optional dataset UUID. When set, traces are added to that
             existing dataset. Invalid IDs fail before any spans are created.
         run: Optional run name. When set alongside ``dataset_id``, traces are
