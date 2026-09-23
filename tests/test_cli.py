@@ -5,13 +5,42 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
+from click import unstyle
 from typer.testing import CliRunner
 
+from promptic_sdk.cli.commands.agent_gym import _evaluator
 from promptic_sdk.cli.commands.experiments import _load_json_array
 from promptic_sdk.cli.config import CliConfig
 from promptic_sdk.cli.main import app
 
 runner = CliRunner()
+
+
+def test_agent_gym_cli_field_method():
+    evaluator = _evaluator(
+        {
+            "kind": "field_level_judge",
+            "fields": {
+                "answer": {"method": "judge", "judgeInstructions": "Check evidence."},
+                "citations": {"method": "array_judge"},
+            },
+        }
+    )
+    fields = evaluator.as_request()["fields"]
+    assert fields["answer"]["method"] == "judge"
+    assert fields["citations"]["method"] == "array_judge"
+    assert "strategy" not in fields["citations"]
+
+
+@pytest.mark.parametrize("legacy_key", ["strategy", "arrayStrategy", "array_strategy"])
+def test_agent_gym_cli_rejects_legacy_field_keys(legacy_key):
+    with pytest.raises(ValueError, match="unsupported field scoring key"):
+        _evaluator(
+            {
+                "kind": "field_level_judge",
+                "fields": {"answer": {legacy_key: "exact"}},
+            }
+        )
 
 
 def _mock_config(**overrides):
@@ -31,7 +60,10 @@ def _mock_config_none():
 def _mock_client(module_path, method_name, return_value):
     """Mock PrompticClient in the cli __init__ module."""
     mock_client = MagicMock()
-    getattr(mock_client, method_name).return_value = return_value
+    method = mock_client
+    for part in method_name.split("."):
+        method = getattr(method, part)
+    method.return_value = return_value
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     return patch(
@@ -151,6 +183,45 @@ class TestTracesCommands:
             assert result.exit_code == 1
 
 
+class TestModelsCommands:
+    def test_list_models_json(self):
+        payload = {
+            "data": [
+                {
+                    "id": "judge-1",
+                    "name": "Judge One",
+                    "provider": "OpenAI",
+                    "group": "openai",
+                    "judgeEligible": True,
+                }
+            ],
+        }
+        with _mock_config(), _mock_client("models", "models.list", payload):
+            result = runner.invoke(app, ["models", "list", "--json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == payload
+
+    def test_list_models_table(self):
+        payload = {
+            "data": [
+                {
+                    "id": "judge-1",
+                    "name": "Judge One",
+                    "provider": "OpenAI",
+                    "group": "openai",
+                    "judgeEligible": True,
+                }
+            ],
+        }
+        with _mock_config(), _mock_client("models", "models.list", payload):
+            result = runner.invoke(app, ["models", "list"])
+
+        assert result.exit_code == 0
+        assert "judge-1" in result.stdout
+        assert "yes" in result.stdout
+
+
 class TestDatasetCommands:
     def test_create_prints_canonical_id_example(self):
         payload = {
@@ -194,6 +265,443 @@ class TestDatasetCommands:
         assert "Cases: 1" in result.stdout
         assert "question" in result.stdout
 
+    def test_cases_add_uploads_json_array(self, tmp_path):
+        cases_file = tmp_path / "cases.json"
+        cases = [
+            {
+                "inputPayload": {"message": "hello"},
+                "expectedPayload": "greeting",
+                "split": "train",
+            }
+        ]
+        cases_file.write_text(json.dumps(cases))
+        payload = {"data": [{"id": 7, **cases[0]}]}
+        with (
+            _mock_config(),
+            _mock_client("datasets", "create_dataset_cases", payload) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "datasets",
+                    "cases",
+                    "add",
+                    "dataset-id",
+                    "--component",
+                    "component-id",
+                    "--file",
+                    str(cases_file),
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["data"][0]["id"] == 7
+        patched.return_value.create_dataset_cases.assert_called_once_with(
+            "component-id", "dataset-id", cases
+        )
+
+    def test_cases_update_reads_json_object(self, tmp_path):
+        case_file = tmp_path / "case.json"
+        updates = {"expectedPayload": {"label": "updated"}, "split": "eval"}
+        case_file.write_text(json.dumps(updates))
+        payload = {"id": 7, "inputPayload": {"message": "hello"}, **updates}
+        with (
+            _mock_config(),
+            _mock_client("datasets", "update_dataset_case", payload) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "datasets",
+                    "cases",
+                    "update",
+                    "dataset-id",
+                    "7",
+                    "--component",
+                    "component-id",
+                    "--file",
+                    str(case_file),
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        patched.return_value.update_dataset_case.assert_called_once_with(
+            "component-id", "dataset-id", 7, **updates
+        )
+
+    def test_cases_list_get_and_delete_call_client(self):
+        cases = {"data": [{"id": 7, "inputPayload": {}, "expectedPayload": None}]}
+        with (
+            _mock_config(),
+            _mock_client("datasets", "list_dataset_cases", cases) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "datasets",
+                    "cases",
+                    "list",
+                    "dataset-id",
+                    "--component",
+                    "component-id",
+                    "--json",
+                ],
+            )
+        assert result.exit_code == 0
+        patched.return_value.list_dataset_cases.assert_called_once_with(
+            "component-id", "dataset-id"
+        )
+
+        with (
+            _mock_config(),
+            _mock_client("datasets", "get_dataset_case", cases["data"][0]) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "datasets",
+                    "cases",
+                    "get",
+                    "dataset-id",
+                    "7",
+                    "--component",
+                    "component-id",
+                    "--json",
+                ],
+            )
+        assert result.exit_code == 0
+        patched.return_value.get_dataset_case.assert_called_once_with(
+            "component-id", "dataset-id", 7
+        )
+
+        with _mock_config(), _mock_client("datasets", "delete_dataset_case", None) as patched:
+            result = runner.invoke(
+                app,
+                [
+                    "datasets",
+                    "cases",
+                    "delete",
+                    "dataset-id",
+                    "7",
+                    "--component",
+                    "component-id",
+                    "--force",
+                ],
+            )
+        assert result.exit_code == 0
+        patched.return_value.delete_dataset_case.assert_called_once_with(
+            "component-id", "dataset-id", 7
+        )
+
+
+class TestAgentGymCommands:
+    def test_apply_round_trips_finalized_verifier_contract(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "aiApplicationId": "00000000-0000-4000-8000-000000000040",
+                    "name": "Agent",
+                    "goal": "Review a submitted result.",
+                    "evaluators": [
+                        {
+                            "kind": "verifier_agent",
+                            "instructions": "Inspect the selected evidence and score correctness.",
+                            "model": "verifier-model",
+                            "metrics": [
+                                {
+                                    "key": "correctness",
+                                    "name": "Correctness",
+                                    "instructions": "Check correctness.",
+                                    "weight": 2,
+                                    "threshold": 0.8,
+                                }
+                            ],
+                            "evidence": {
+                                "caseInputs": True,
+                                "submittedOutput": True,
+                                "expectedBehavior": False,
+                                "expectedOutput": True,
+                                "executionTrace": True,
+                            },
+                            "budget": {"maxSteps": 200},
+                        }
+                    ],
+                }
+            )
+        )
+        benchmark = MagicMock()
+        benchmark.id = "00000000-0000-4000-8000-000000000041"
+        benchmark.ready_for_submission = False
+        benchmark.data = {}
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.benchmarks.create.return_value = benchmark
+
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code == 0
+        evaluator = client.benchmarks.create.call_args.kwargs["evaluators"][0]
+        assert evaluator.as_request() == {
+            "kind": "verifier_agent",
+            "required": False,
+            "instructions": "Inspect the selected evidence and score correctness.",
+            "model": "verifier-model",
+            "evidence": {
+                "caseInputs": True,
+                "submittedOutput": True,
+                "expectedBehavior": False,
+                "expectedOutput": True,
+                "executionTrace": True,
+            },
+            "metrics": [
+                {
+                    "key": "correctness",
+                    "name": "Correctness",
+                    "instructions": "Check correctness.",
+                }
+            ],
+            "metricBindings": {"correctness": {"weight": 2.0, "threshold": 0.8}},
+            "budget": {"maxSteps": 200},
+        }
+
+    def test_apply_preserves_explicit_field_scoring(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "aiApplicationId": "00000000-0000-4000-8000-000000000040",
+                    "name": "Agent",
+                    "goal": "Extract an answer.",
+                    "evaluators": [
+                        {
+                            "kind": "field_level_judge",
+                            "fields": {
+                                "answer": {
+                                    "method": "judge",
+                                    "judgeInstructions": "Check the evidence.",
+                                    "weight": 2,
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        benchmark = MagicMock()
+        benchmark.id = "00000000-0000-4000-8000-000000000041"
+        benchmark.ready_for_submission = False
+        benchmark.data = {}
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.benchmarks.create.return_value = benchmark
+
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code == 0
+        evaluator = client.benchmarks.create.call_args.kwargs["evaluators"][0]
+        assert evaluator.as_request()["fields"] == {
+            "answer": {
+                "include": True,
+                "method": "judge",
+                "weight": 2.0,
+                "judge_instructions": "Check the evidence.",
+            }
+        }
+
+    def test_apply_round_trips_locked_expected_behavior_judge(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "aiApplicationId": "00000000-0000-4000-8000-000000000040",
+                    "name": "Agent",
+                    "goal": "Verify a submission.",
+                    "evaluators": [
+                        {
+                            "kind": "expected_behavior_judge",
+                            "name": "Expected behavior",
+                            "description": "Uses the platform preset.",
+                            "model": "verifier-model",
+                            "metricBindings": {
+                                "behavior_compliance": {"weight": 2, "threshold": 0.8}
+                            },
+                            "required": True,
+                            "threshold": 0.8,
+                        }
+                    ],
+                }
+            )
+        )
+        benchmark = MagicMock()
+        benchmark.id = "00000000-0000-4000-8000-000000000041"
+        benchmark.ready_for_submission = False
+        benchmark.data = {}
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.benchmarks.create.return_value = benchmark
+
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code == 0
+        evaluator = client.benchmarks.create.call_args.kwargs["evaluators"][0]
+        assert evaluator.as_request() == {
+            "kind": "expected_behavior_judge",
+            "required": True,
+            "name": "Expected behavior",
+            "description": "Uses the platform preset.",
+            "threshold": 0.8,
+            "model": "verifier-model",
+            "metricBindings": {"behavior_compliance": {"weight": 2.0, "threshold": 0.8}},
+        }
+
+    @pytest.mark.parametrize(
+        ("evaluator", "message"),
+        [
+            (
+                {
+                    "kind": "verifier_agent",
+                    "instructions": "Evaluate.",
+                    "metrics": [{"key": "overall", "name": "Overall", "instructions": "Evaluate."}],
+                    "tools": {"shell": False},
+                },
+                "unsupported verifier_agent field",
+            ),
+            (
+                {
+                    "kind": "verifier_agent",
+                    "instructions": "Evaluate.",
+                    "metrics": [{"key": "overall", "name": "Overall", "instructions": "Evaluate."}],
+                    "evidence": {"required": ["case_input"]},
+                },
+                "unsupported verifier evidence field",
+            ),
+            (
+                {"kind": "expected_behavior_judge", "instructions": "Override."},
+                "expected_behavior_judge is locked",
+            ),
+            (
+                {"kind": "expected_behavior_judge", "evidence": {"caseInputs": True}},
+                "expected_behavior_judge is locked",
+            ),
+            (
+                {
+                    "kind": "expected_behavior_judge",
+                    "metrics": [{"key": "overall", "name": "Overall", "instructions": "Override."}],
+                },
+                "expected_behavior_judge is locked",
+            ),
+            (
+                {"kind": "expected_behavior_judge", "budget": {"maxSteps": 20}},
+                "expected_behavior_judge is locked",
+            ),
+            ({"kind": "trajectory_judge"}, "unsupported evaluator kind"),
+        ],
+    )
+    def test_apply_rejects_removed_or_locked_verifier_configuration(
+        self, tmp_path, evaluator, message
+    ):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "name": "Agent",
+                    "goal": "Verify a submission.",
+                    "evaluators": [evaluator],
+                }
+            )
+        )
+
+        result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code != 0
+        assert isinstance(result.exception, ValueError)
+        assert message in str(result.exception)
+
+    def test_apply_rejects_shared_field_judge_rubric(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "aiApplicationId": "00000000-0000-4000-8000-000000000040",
+                    "name": "Agent",
+                    "goal": "Extract an answer.",
+                    "evaluators": [{"kind": "field_level_judge", "rubric": "Shared guidance"}],
+                }
+            )
+        )
+
+        result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code != 0
+        assert isinstance(result.exception, ValueError)
+        assert "does not support shared instructions" in str(result.exception)
+
+    def test_apply_explicitly_publishes_the_configured_revision(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "aiApplicationId": "00000000-0000-4000-8000-000000000040",
+                    "name": "Agent",
+                    "goal": "Classify requests.",
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "outputSchema": {"type": "object", "properties": {}},
+                    "evaluators": [],
+                    "cases": [{"input": {}, "output": {}}],
+                }
+            )
+        )
+        benchmark = MagicMock()
+        benchmark.id = "00000000-0000-4000-8000-000000000041"
+        benchmark.ready_for_submission = True
+        benchmark.data = {"activeRevisionId": "00000000-0000-4000-8000-000000000042"}
+        benchmark.cases.add_many.return_value = {"created": 1, "failed": 0, "results": []}
+        benchmark.refresh.return_value = benchmark
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.benchmarks.create.return_value = benchmark
+
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code == 0
+        assert "Active revision: 00000000-0000-4000-8000-000000000042" in result.stdout
+        benchmark.publish.assert_called_once_with()
+
+    def test_apply_no_longer_accepts_manual_publish_flag(self, tmp_path):
+        config = tmp_path / "agent.json"
+        config.write_text(json.dumps({"name": "Agent", "goal": "Classify requests."}))
+
+        result = runner.invoke(app, ["agent-gym", "apply", str(config), "--publish"])
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+
+    def test_publish_draft_activates_ready_revision(self):
+        benchmark = MagicMock()
+        benchmark.publish.return_value.revision.id = "revision-2"
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+        client.benchmarks.get.return_value = benchmark
+
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "publish-draft", "benchmark-1"])
+
+        assert result.exit_code == 0
+        assert "revision-2" in result.stdout
+        benchmark.publish.assert_called_once_with()
+
 
 class TestExperimentsCommands:
     def _new_exp_payload(self) -> dict:
@@ -204,6 +712,82 @@ class TestExperimentsCommands:
             "targetModel": "gpt-5.4-nano",
             "modelUnavailable": False,
         }
+
+    def test_create_structured_output_with_schema_hyperparameters_and_start(self, tmp_path):
+        schema_file = tmp_path / "schema.json"
+        schema = {
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+        }
+        schema_file.write_text(json.dumps(schema))
+        hyperparameters_file = tmp_path / "hyperparameters.json"
+        hyperparameters = {"epochs": 2, "trainSplitRatio": 0.8, "enableCot": True}
+        hyperparameters_file.write_text(json.dumps(hyperparameters))
+
+        with (
+            _mock_config(),
+            _mock_client("experiments", "create_experiment", self._new_exp_payload()) as patched,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "create",
+                    "--component-id",
+                    "component-id",
+                    "--target-model",
+                    "gpt-4.1-nano",
+                    "--task-type",
+                    "structuredOutput",
+                    "--initial-prompt",
+                    "Classify {message}",
+                    "--output-schema",
+                    str(schema_file),
+                    "--hyperparameters",
+                    str(hyperparameters_file),
+                    "--start",
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        client = patched.return_value
+        client.create_experiment.assert_called_once_with(
+            ai_component_id="component-id",
+            target_model="gpt-4.1-nano",
+            task_type="structuredOutput",
+            initial_prompt="Classify {message}",
+            name=None,
+            description=None,
+            provider="openai",
+            optimizer="prompticV2",
+            hyperparameters=hyperparameters,
+            initial_prediction_model_schema=schema,
+        )
+        client.start_experiment.assert_called_once_with("new-exp-id")
+
+    def test_create_structured_output_requires_schema(self):
+        with _mock_config():
+            result = runner.invoke(
+                app,
+                [
+                    "experiments",
+                    "create",
+                    "--component-id",
+                    "component-id",
+                    "--target-model",
+                    "gpt-4.1-nano",
+                    "--task-type",
+                    "structuredOutput",
+                    "--initial-prompt",
+                    "Classify {message}",
+                ],
+            )
+
+        assert result.exit_code == 2
+        normalized_output = "".join(unstyle(result.output).split())
+        assert "--output-schemaisrequired" in normalized_output
 
     def test_duplicate_calls_client_with_no_flags(self):
         with (

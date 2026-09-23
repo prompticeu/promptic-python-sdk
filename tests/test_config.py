@@ -57,6 +57,20 @@ class TestConfig:
         # Endpoint falls back to file since no env var set
         assert config.endpoint == "https://file.com"
 
+    def test_env_api_key_is_not_shadowed_by_saved_access_token(self, monkeypatch):
+        monkeypatch.setenv("PROMPTIC_API_KEY", "pk_env")
+        monkeypatch.delenv("PROMPTIC_ACCESS_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "promptic_sdk.cli.config._read_config_file",
+            lambda: {"access_token": "stale-token", "endpoint": "https://file.com"},
+        )
+
+        config = load_config()
+
+        assert config is not None
+        assert config.api_key == "pk_env"
+        assert config.access_token is None
+
     def test_config_file_permissions(self, tmp_path, monkeypatch):
         config_file = tmp_path / "config.toml"
         monkeypatch.setattr("promptic_sdk.cli.config._CONFIG_DIR", tmp_path)

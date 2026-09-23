@@ -174,14 +174,12 @@ from a display name.
 with promptic_sdk.ai_component(
     "my-component",
     dataset_id="550e8400-e29b-41d4-a716-446655440000",
-    run="v1-baseline",
 ):
     agent.run(test_input)
 ```
 
-Invalid dataset IDs and run contexts without a dataset ID fail immediately,
-before spans are created. The SDK emits the `promptic.dataset.id` OpenTelemetry
-attribute for server-side linkage.
+Invalid dataset IDs fail immediately, before spans are created. The SDK emits
+the `promptic.dataset.id` OpenTelemetry attribute for server-side linkage.
 
 ### Tracing workflows with custom spans
 
@@ -261,6 +259,139 @@ span.set_attribute(
 
 See the [Tracing guide](https://promptic.eu/docs/guides/tracing#tracing-workflows-with-custom-spans) for the full pattern.
 
+## Agent Gym
+
+Author a benchmark and atomically add private cases. Publish an immutable revision explicitly once
+the configuration is ready:
+
+```python
+from promptic_sdk import (
+    AgentGymClient,
+    BenchmarkCase,
+    BenchmarkFile,
+    FieldScoring,
+    FieldLevelJudge,
+)
+
+with AgentGymClient(workspace_id="<workspace-uuid>") as gym:
+    benchmark = gym.benchmarks.create(
+        name="Document Comparison",
+        goal="Compare the supplied documents and produce a review report.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "characteristic_id": {"type": "string"},
+                "files": {"type": "array", "x-promptic-type": "file"},
+            },
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "report": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+        },
+        evaluators=[
+            FieldLevelJudge(
+                fields={
+                    "report": FieldScoring(method="judge", judge_instructions="Check cited evidence."),
+                    "confidence": FieldScoring(method="exact"),
+                },
+            )
+        ],
+    )
+    shared = BenchmarkFile("shared-instructions.pdf")
+    benchmark.cases.add_many([
+        BenchmarkCase(
+            input={"characteristic_id": "F_26", "files": [shared]},
+            output={"report": "Review section A.", "confidence": 1.0},
+        ),
+        BenchmarkCase(
+            input={"characteristic_id": "F_27", "files": [shared]},
+            output={"report": "Review section B.", "confidence": 1.0},
+        ),
+    ])
+    published = benchmark.publish()
+    revision_id = published.revision.id
+```
+
+Benchmark authoring currently follows the platform's alpha API and therefore requires an admin
+account. The SDK exposes typed schemas and evaluator models, imports cases in confirmed batches,
+and leaves every authoring change unpublished until `publish()` is called.
+
+The Output schema defines the expected shape. Explicit evaluators define how that output is scored;
+the field-level evaluator can mix deterministic and judge-based strategies per field.
+
+Run a trusted local candidate against an immutable Agent Gym benchmark, upload its output artifacts
+and traces, wait for scoring, and inspect the weakest cases:
+
+```python
+from pathlib import Path
+
+from promptic_sdk import AgentGymCase, AgentGymCaseResult, AgentGymClient, AgentGymOutputArtifact
+
+
+def execute_case(case: AgentGymCase) -> AgentGymCaseResult:
+    report = Path(f"report-{case.ordinal}.html")
+    report.write_text(build_report(case.input))
+    return AgentGymCaseResult.artifact(
+        AgentGymOutputArtifact(report, field_path="report")
+    )
+
+
+with AgentGymClient() as gym:
+    submitted = gym.run_and_submit(
+        benchmark_id="<benchmark-uuid>",
+        executor=execute_case,
+        name="report-agent",
+        version="1.0.0",
+        architecture_description="Builds and validates a standalone HTML report.",
+        repository_url="https://github.com/acme/report-agent",
+        commit_hash="6f1ed002ab5595859014ebf0951522d9d5f25a73",
+        trace_cases=True,
+        trace_policy="best_effort",
+    )
+    summary = gym.get_run_results("<benchmark-uuid>", submitted.run_id)
+    weakest = gym.list_case_results(
+        "<benchmark-uuid>", submitted.run_id, sort="score", limit=5
+    )
+```
+
+`run_and_submit()` executes the callback inside your authenticated Python process. Use it only for
+code you trust. It does **not** sandbox generated or untrusted agents. `trace_cases=True` creates and
+links one independent root trace per case when Promptic tracing is already configured; it never
+initializes tracing implicitly. Trace resolution happens once before submission and defaults to
+`trace_policy="best_effort"`, so delayed or failed trace ingestion cannot discard valid predictions.
+Use `"required"` when trace evidence must be present or `"disabled"` to omit it entirely.
+Each completed case prediction is uploaded immediately. Prediction uploads are idempotent, retry
+transient transport, rate-limit, and server failures up to three times, and are bounded to 1 MiB
+per request. The lower-level session helper also splits queued predictions dynamically by both
+serialized size and the API's 500-item limit. Store larger outputs as artifacts.
+
+After an upload is acknowledged, rerunning it safely replaces the same case rather than creating a
+duplicate. If all upload attempts fail, `run_and_submit()` raises and never submits partial
+coverage for scoring. Use a stable `idempotency_key` when retrying a whole run. A hard process or
+machine failure before the upload acknowledgement cannot provide exactly-once local execution; use
+the low-level session API with your own durable work queue when that guarantee is required.
+Optional `repository_url` and `commit_hash` values preserve the source revision as variant
+Architecture metadata. Low-level external runtimes can provide the same keys in
+`submit(identity=...)`. Repository URLs must use HTTPS and cannot contain credentials.
+
+If `wait_for_submission()` returns the recoverable `dispatch_failed` state, call
+`retry_scoring(benchmark_id, run_id)` to restore scoring delivery for that same run. Sync, async,
+and submission-session clients expose this operation; it never creates a replacement run.
+
+Run untrusted code in a separately isolated, credentialless environment, then let a trusted runner
+use `start_submission(variant_identity=...)`, `add_prediction()`, and `submit()` to persist its predictions
+and request scoring.
+
+Sync and async clients expose the same lifecycle and inspection surface: submission creation and
+resume, manifest paging/materialization, artifact upload and verification, trace resolution,
+submission and polling, aggregate results, cursor-paginated case results, paired comparisons, and
+bounded atomic artifact downloads. See the [Agent Gym guide](docs/agent-gym.md) and the
+[authoring](examples/agent_gym_author_benchmark.py) and
+[submission](examples/agent_gym_external_submission.py) examples.
+
 ## API client
 
 Both a sync (`PrompticClient`) and async (`AsyncPrompticClient`) client are available. They share the same method signatures and return types.
@@ -270,13 +401,22 @@ from promptic_sdk import PrompticClient
 
 with PrompticClient() as client:
     traces = client.list_traces(limit=10)
+    models = client.models.list()
+    judge_model_ids = [model["id"] for model in models["data"] if model["judgeEligible"]]
 ```
+
+`models.list()` requires a platform deployment that exposes `GET /api/v1/models`.
+When explicitly configuring a benchmark judge evaluator, use only models with
+`judgeEligible == True` (the OpenAI group). Omit the judge model to use the
+platform default. An explicit, non-eligible model receives a 400 configuration
+error once platform validation is deployed.
 
 ```python
 from promptic_sdk import AsyncPrompticClient
 
 async with AsyncPrompticClient() as client:
     traces = await client.list_traces(limit=10)
+    models = await client.models.list()
 ```
 
 Both clients provide typed methods for the full Promptic REST API:
@@ -284,6 +424,7 @@ Both clients provide typed methods for the full Promptic REST API:
 | Resource       | Methods                                                                 |
 | -------------- | ----------------------------------------------------------------------- |
 | AI Application | `get_ai_application`                                                     |
+| Models         | `models.list` (AI Application-scoped available models)                   |
 | Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
 | Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment` |
@@ -312,6 +453,7 @@ promptic [command] [subcommand] [options]
 | `promptic ai-application list`         | List accessible AI Applications        |
 | `promptic ai-application select <id>`  | Select an AI Application                |
 | `promptic ai-application info`         | Show AI Application info                |
+| `promptic models list`                 | List available models                   |
 | `promptic traces list`                 | List recent traces                     |
 | `promptic traces get <id>`             | Get a trace with spans                 |
 | `promptic traces artifacts <id>`       | List artifacts for a trace             |
@@ -322,7 +464,7 @@ promptic [command] [subcommand] [options]
 | `promptic components get <id>`         | Get component details                  |
 | `promptic components delete <id>`      | Delete a component                     |
 | `promptic experiments list`            | List experiments                       |
-| `promptic experiments create`          | Create an experiment (interactive)     |
+| `promptic experiments create`          | Create/configure an experiment         |
 | `promptic experiments create-tool-selection` | Create a tool-selection experiment |
 | `promptic experiments get <id>`        | Get experiment details                 |
 | `promptic experiments update <id>`     | Update an experiment                   |
@@ -342,18 +484,16 @@ promptic [command] [subcommand] [options]
 | `promptic datasets list`               | List datasets                          |
 | `promptic datasets get <id>`           | Get dataset details                    |
 | `promptic datasets delete <id>`        | Delete a dataset                       |
-| `promptic runs create`                 | Create a run                           |
-| `promptic runs list`                   | List runs                              |
-| `promptic runs get <id>`               | Get run details                        |
-| `promptic runs delete <id>`            | Delete a run                           |
-| `promptic annotations create`          | Create an annotation                   |
-| `promptic annotations list`            | List annotations                       |
-| `promptic annotations delete <id>`     | Delete an annotation                   |
-| `promptic evaluations run`             | Run an evaluation                      |
-| `promptic evaluations list`            | List evaluations                       |
-| `promptic evaluations get <id>`        | Get evaluation details                 |
+| `promptic datasets cases list <id>`    | List canonical dataset cases           |
+| `promptic datasets cases get <id> <case-id>` | Get a canonical dataset case    |
+| `promptic datasets cases add <id> --file cases.json` | Upload canonical cases     |
+| `promptic datasets cases update <id> <case-id> --file case.json` | Update a case |
+| `promptic datasets cases delete <id> <case-id>` | Delete a canonical case       |
 
 All list commands support `--json` for machine-readable output.
+
+`promptic experiments create` accepts `--hyperparameters <file>` and
+`--output-schema <file>` JSON documents. Use `--start` to schedule the experiment immediately.
 
 ## Configuration
 

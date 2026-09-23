@@ -1,5 +1,85 @@
 # Changelog
 
+## v0.24.0 (2026-09-18)
+
+## Features
+
+- Expose available models through the SDK and CLI.
+
+
+## v0.23.0 (2026-09-18)
+
+## Features
+
+- Added a prompt optimization workflow to the CLI, bringing it to feature parity with the SDK.
+
+## Improvements
+
+- Unified Agent Gym field-scoring methods in the Python SDK.
+
+
+## v0.22.0 (2026-09-04)
+
+## Features
+
+- Added an Agent Gym SDK for submitting external evaluations, retrieving results, and authoring tasks.
+
+
+## Unreleased
+
+## Features
+
+- Added complete canonical dataset-case CLI CRUD through `promptic datasets cases`.
+- Added CLI experiment hyperparameter files, structured-output schemas, and optional immediate
+  start support.
+- Added typed verifier-agent evidence selection, required grounding evidence, sandbox tool
+  capabilities, and investigation budgets to Agent Gym benchmark authoring.
+- Added typed sync and async Agent Gym benchmark authoring for definitions, structured field
+  scoring, LLM/agent judges, private case and reference files, bulk cases, draft status, and
+  immutable revision publishing against the platform's current alpha admin API.
+- Added explicit Input and Output schemas plus typed field maps on
+  `AgentEvaluator.field_level_judge()`, keeping data contracts independent from evaluator choice.
+- Added modular typed sync and async Agent Gym clients for external submission sessions, safe
+  manifest materialization, output artifacts, trace linkage, trusted callback execution, and scoring
+  polling.
+- Added authenticated aggregate and case result inspection, paired run comparison, and bounded
+  atomic prediction artifact downloads with exact-size and optional SHA-256 verification.
+- Added `run_and_submit(executor=...)` with opt-in automatic per-case root traces.
+- Persisted each completed callback prediction immediately with bounded transient retries, while
+  dynamically limiting session upload batches by both serialized size and API item count.
+- Added sync and async session prediction builders that upload result artifacts, resolve trace
+  references, validate exact manifest coverage, upload prediction batches, and request scoring.
+- Decoupled canonical prediction uploads from trace ingestion with submission-wide `required`, `best_effort`,
+  and `disabled` trace policies. Trace IDs are now resolved once at submission, and best-effort
+  failures no longer prevent valid predictions from being submitted.
+- Added optional `repository_url` and `commit_hash` variant provenance to typed low-level
+  retry-safe prediction uploads and trusted sync/async Agent Gym submission APIs.
+- Aligned immutable manifest and result case identifiers with canonical integer dataset-case IDs,
+  and added typed schema-migration draft inspection/resolution plus run re-evaluation APIs.
+- Added Agent Gym CLI commands for revision history, migration drafts, conflict resolution, draft
+  abandonment, and evaluator-only re-evaluation.
+- Aligned benchmark bulk authoring and CLI apply with automatic ready-revision activation, so one
+  bulk import cannot expose intermediate per-case revisions.
+
+## Documentation
+
+- Added an executable benchmark-authoring example covering artifact judge evidence, private case
+  files, reference evidence, and publishing.
+- Added an Agent Gym guide and executable HTML artifact example that distinguish trusted in-process
+  callbacks from isolated untrusted agent execution.
+
+## Bug Fixes
+
+- Ensured an explicit `PROMPTIC_API_KEY` is not shadowed by a stale access token in the saved CLI
+  configuration.
+
+## v0.21.1 (2026-09-03)
+
+## Improvements
+
+- Removed the legacy Agent Evaluation API.
+
+
 ## v0.21.0 (2026-09-03)
 
 ## Features
@@ -27,7 +107,6 @@
 ## Bug Fixes
 
 - Improved cleanup handling for superseded releases.
-
 
 ## v0.18.0 (2026-07-31)
 

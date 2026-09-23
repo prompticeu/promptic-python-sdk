@@ -36,6 +36,17 @@ def _load_json_array(path: Path, *, option_name: str) -> list[dict[str, Any]]:
     return value
 
 
+def _load_json_object(path: Path, *, option_name: str) -> dict[str, Any]:
+    """Load a JSON object for a CLI option."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"Could not read valid JSON from {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise typer.BadParameter(f"{option_name} must contain a JSON object")
+    return value
+
+
 def _validate_tool_selection_tools(
     tools: list[dict[str, Any]], *, option_name: str = "--tools"
 ) -> None:
@@ -124,6 +135,27 @@ def create_experiment(
     description: Annotated[str | None, typer.Option("--description", help="Description.")] = None,
     provider: str = typer.Option("openai", help="Model provider."),
     optimizer: str = typer.Option("prompticV2", help="Optimizer type."),
+    hyperparameters_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--hyperparameters",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file containing experiment hyperparameters.",
+        ),
+    ] = None,
+    output_schema_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-schema",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON Schema file for structured-output predictions.",
+        ),
+    ] = None,
+    start: bool = typer.Option(False, "--start", help="Start the experiment after creating it."),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a new experiment.
@@ -151,6 +183,19 @@ def create_experiment(
         if not initial_prompt:
             initial_prompt = None
 
+    hyperparameters = (
+        _load_json_object(hyperparameters_file, option_name="--hyperparameters")
+        if hyperparameters_file
+        else None
+    )
+    output_schema = (
+        _load_json_object(output_schema_file, option_name="--output-schema")
+        if output_schema_file
+        else None
+    )
+    if task_type == "structuredOutput" and output_schema is None:
+        raise typer.BadParameter("--output-schema is required for structuredOutput experiments")
+
     with get_client() as client:
         result = client.create_experiment(
             ai_component_id=component_id,
@@ -161,7 +206,11 @@ def create_experiment(
             description=description,
             provider=provider,
             optimizer=optimizer,
+            hyperparameters=hyperparameters,
+            initial_prediction_model_schema=output_schema,
         )
+        if start:
+            client.start_experiment(result["id"])
 
     if output_json:
         json.dump(result, sys.stdout, indent=2, default=str)
@@ -172,6 +221,8 @@ def create_experiment(
     console.print(f"  Name:   {result['name'] or '-'}")
     console.print(f"  Model:  {result['targetModel']}")
     console.print(f"  Status: {result['experimentStatus']}")
+    if start:
+        console.print("[green]Experiment scheduled.[/green]")
 
 
 @experiments_app.command("create-tool-selection")

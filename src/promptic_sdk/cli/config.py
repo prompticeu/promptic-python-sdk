@@ -38,8 +38,8 @@ def load_config() -> CliConfig | None:
     Returns:
         CliConfig if valid credentials are found, None otherwise.
     """
-    api_key = os.environ.get("PROMPTIC_API_KEY")
-    access_token = os.environ.get("PROMPTIC_ACCESS_TOKEN")
+    env_api_key = os.environ.get("PROMPTIC_API_KEY")
+    env_access_token = os.environ.get("PROMPTIC_ACCESS_TOKEN")
     endpoint = os.environ.get("PROMPTIC_ENDPOINT")
     # Accept the deprecated ``PROMPTIC_WORKSPACE_ID`` env var as a fallback.
     ai_application_id = os.environ.get("PROMPTIC_AI_APPLICATION_ID") or os.environ.get(
@@ -48,9 +48,16 @@ def load_config() -> CliConfig | None:
 
     # Try loading from config file if env vars are missing
     file_config = _read_config_file()
-    if not api_key:
+    if env_access_token:
+        access_token = env_access_token
+        api_key = env_api_key
+    elif env_api_key:
+        # An explicit environment API key must not be shadowed by a stale
+        # access token saved by an earlier interactive login.
+        api_key = env_api_key
+        access_token = None
+    else:
         api_key = file_config.get("api_key")
-    if not access_token:
         access_token = file_config.get("access_token")
     if not endpoint:
         endpoint = file_config.get("endpoint")

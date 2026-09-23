@@ -87,6 +87,43 @@ class TestPrompticClient:
             result = client.list_traces(limit=10)
             assert result == response_data
 
+    def test_list_models(self):
+        payload = {
+            "data": [
+                {
+                    "id": "judge-1",
+                    "name": "Judge One",
+                    "provider": "OpenAI",
+                    "group": "openai",
+                    "judgeEligible": True,
+                },
+                {
+                    "id": "other-1",
+                    "name": "Other One",
+                    "provider": "Other",
+                    "group": "openrouter",
+                    "judgeEligible": False,
+                },
+            ],
+        }
+
+        with PrompticClient(api_key="pk_test") as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.method == "GET"
+                assert request.url.path == "/api/v1/models"
+                assert request.headers["authorization"] == "Bearer pk_test"
+                assert not request.url.params
+                return httpx.Response(200, json=payload)
+
+            client._client = httpx.Client(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert client.models.list() == payload
+
     def test_get_trace(self, monkeypatch):
         monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
         response_data = {"traceId": "abc123", "spans": []}
@@ -422,6 +459,37 @@ class TestPrompticClient:
 
 
 class TestAsyncPrompticClient:
+    @pytest.mark.asyncio
+    async def test_list_models(self):
+        payload = {
+            "data": [
+                {
+                    "id": "judge-1",
+                    "name": "Judge One",
+                    "provider": "OpenAI",
+                    "group": "openai",
+                    "judgeEligible": True,
+                }
+            ],
+        }
+
+        async with AsyncPrompticClient(api_key="pk_test") as client:
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                assert request.method == "GET"
+                assert request.url.path == "/api/v1/models"
+                assert request.headers["authorization"] == "Bearer pk_test"
+                assert not request.url.params
+                return httpx.Response(200, json=payload)
+
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://promptic.eu/api/v1",
+                headers={"Authorization": "Bearer pk_test"},
+            )
+
+            assert await client.models.list() == payload
+
     def test_requires_api_key(self):
         with pytest.raises(ValueError, match="Authentication required"):
             AsyncPrompticClient(api_key=None)
