@@ -28,6 +28,7 @@ class RequestSpec:
     data: Mapping[str, Any] | None = None
     files: RequestFiles | None = field(default=None, repr=False)
     headers: Mapping[str, str] | None = None
+    timeout: float | None = None
 
 
 class AgentGymAPIError(PrompticAPIError):
@@ -173,6 +174,7 @@ class SyncTransport:
             data=spec.data,
             files=spec.files,
             headers=spec.headers,
+            timeout=self.api.timeout if spec.timeout is None else spec.timeout,
         )
         if response.status_code >= 400:
             raise _api_error(response)
@@ -221,6 +223,7 @@ class AsyncTransport:
             data=spec.data,
             files=spec.files,
             headers=spec.headers,
+            timeout=self.api.timeout if spec.timeout is None else spec.timeout,
         )
         if response.status_code >= 400:
             raise _api_error(response)

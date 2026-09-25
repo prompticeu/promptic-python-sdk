@@ -9,7 +9,8 @@ Run with:
 
 Environment variables:
     PROMPTIC_API_KEY          - API key owned by a platform admin
-    PROMPTIC_AI_APPLICATION_ID - AI Application UUID
+    PROMPTIC_AI_APPLICATION_ID - AI Application UUID (needed for login tokens;
+                                optional with an AI Application-scoped API key)
     AGENT_GYM_INPUT_FILE      - Local PDF, document, image, or text input
     AGENT_GYM_REFERENCE_FILE  - Local private reference output
 
@@ -32,7 +33,7 @@ from promptic_sdk import (
     VerifierMetric,
 )
 
-AI_APPLICATION_ID = os.environ["PROMPTIC_AI_APPLICATION_ID"]
+AI_APPLICATION_ID = os.environ.get("PROMPTIC_AI_APPLICATION_ID")
 INPUT_FILE = Path(os.environ["AGENT_GYM_INPUT_FILE"])
 REFERENCE_FILE = Path(os.environ["AGENT_GYM_REFERENCE_FILE"])
 

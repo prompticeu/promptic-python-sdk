@@ -349,15 +349,12 @@ def _idempotency_prefix(value: str | None) -> str:
     return prefix
 
 
-def _flush_traces() -> None:
-    try:
-        from opentelemetry import trace
+def _flush_traces(timeout_millis: int = 30000) -> None:
+    from opentelemetry import trace
 
-        force_flush = getattr(trace.get_tracer_provider(), "force_flush", None)
-        if callable(force_flush):
-            force_flush()
-    except Exception:  # noqa: BLE001
-        return
+    force_flush = getattr(trace.get_tracer_provider(), "force_flush", None)
+    if callable(force_flush) and force_flush(timeout_millis=timeout_millis) is False:
+        raise RuntimeError("Trace exporter did not complete its flush")
 
 
 @contextmanager

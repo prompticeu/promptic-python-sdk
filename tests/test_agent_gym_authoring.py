@@ -714,9 +714,31 @@ def test_create_accepts_output_schema_with_explicit_field_evaluator():
         )
 
     assert bodies[0]["targetSchema"] == schema
+    assert bodies[0]["aiApplicationId"] == WORKSPACE_ID
+    assert "workspaceId" not in bodies[0]
     assert bodies[0]["evaluators"][0]["fields"] == {
         "answer": {"include": True, "method": "exact", "weight": 1.0}
     }
+
+
+def test_scoped_api_key_can_create_and_list_without_application_id(monkeypatch):
+    monkeypatch.delenv("PROMPTIC_AI_APPLICATION_ID", raising=False)
+    monkeypatch.delenv("PROMPTIC_WORKSPACE_ID", raising=False)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(201, json=_benchmark())
+        return httpx.Response(200, json={"data": [_benchmark()]})
+
+    with AgentGymClient(api_key="ptc_scoped") as client:
+        _replace_sync(client, handler, lambda request: httpx.Response(500))
+        client.benchmarks.create(name="Invoice agent", goal="Extract invoices.")
+        client.benchmarks.list()
+
+    assert "aiApplicationId" not in json.loads(requests[0].content)
+    assert "aiApplicationId" not in requests[1].url.params
 
 
 def test_field_level_evaluator_serializes_explicit_typed_fields():

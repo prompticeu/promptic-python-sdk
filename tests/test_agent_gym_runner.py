@@ -663,7 +663,7 @@ def test_best_effort_trace_policy_submits_without_unresolved_traces(monkeypatch)
                 identity={"name": "external-agent", "version": "1.0.0"},
                 idempotency_key="best-effort-submit",
                 trace_policy="best_effort",
-                trace_max_wait=0,
+                trace_max_wait=0.5,
             )
 
     assert response["run_id"] == RUN_ID

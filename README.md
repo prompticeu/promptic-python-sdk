@@ -273,7 +273,7 @@ from promptic_sdk import (
     FieldLevelJudge,
 )
 
-with AgentGymClient(workspace_id="<workspace-uuid>") as gym:
+with AgentGymClient(ai_application_id="<ai-application-uuid>") as gym:
     benchmark = gym.benchmarks.create(
         name="Document Comparison",
         goal="Compare the supplied documents and produce a review report.",

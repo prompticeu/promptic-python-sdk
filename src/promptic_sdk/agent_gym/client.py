@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import mimetypes
 import os
 import time
 import warnings
 from collections.abc import AsyncIterator, Iterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
 
+from promptic_sdk.agent_gym._deadline import bounded_call, bounded_call_async, remaining
 from promptic_sdk.agent_gym._http import (
     AgentGymAPIError,
     ArtifactTransferError,
@@ -115,9 +118,9 @@ _PREDICTION_UPLOAD_RETRY_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
 
 def _validate_wait(max_wait: float, poll_interval: float) -> None:
-    if max_wait < 0:
+    if not math.isfinite(max_wait) or max_wait < 0:
         raise ValueError("max_wait must be non-negative")
-    if poll_interval <= 0:
+    if not math.isfinite(poll_interval) or poll_interval <= 0:
         raise ValueError("poll_interval must be positive")
 
 
@@ -495,11 +498,16 @@ class AgentGymClient:
         )
 
     def resolve_traces(
-        self, benchmark_id: str, submission_id: str, trace_ids: Sequence[str]
+        self,
+        benchmark_id: str,
+        submission_id: str,
+        trace_ids: Sequence[str],
+        *,
+        timeout: float | None = None,
     ) -> TraceResolutionList:
         """Resolve raw OTEL IDs to database UUIDs accepted with predictions."""
         return self._transport.request(
-            resolve_traces_request(benchmark_id, submission_id, trace_ids)
+            replace(resolve_traces_request(benchmark_id, submission_id, trace_ids), timeout=timeout)
         )
 
     def wait_for_resolved_traces(
@@ -515,8 +523,20 @@ class AgentGymClient:
         _validate_wait(max_wait, poll_interval)
         normalized = normalize_trace_ids(trace_ids)
         deadline = time.monotonic() + max_wait
+        by_id: dict[str, str | None] = {}
         while True:
-            resolution = self.resolve_traces(benchmark_id, submission_id, normalized)
+            try:
+                resolution = bounded_call(
+                    lambda: self.resolve_traces(
+                        benchmark_id, submission_id, normalized, timeout=remaining(deadline)
+                    ),
+                    deadline,
+                )
+            except (TimeoutError, httpx.TimeoutException) as error:
+                raise UnresolvedTraceError(
+                    [trace_id for trace_id in normalized if not by_id.get(trace_id)],
+                    resolved={key: value for key, value in by_id.items() if value is not None},
+                ) from error
             by_id = {item["trace_id"]: item["trace_db_id"] for item in resolution["data"]}
             unresolved = [trace_id for trace_id in normalized if not by_id.get(trace_id)]
             if not unresolved:
@@ -525,12 +545,12 @@ class AgentGymClient:
                 raise UnresolvedTraceError(
                     unresolved,
                     resolved={
-                        trace_id: cast(str, trace_db_id)
+                        trace_id: trace_db_id
                         for trace_id, trace_db_id in by_id.items()
                         if trace_db_id is not None
                     },
                 )
-            time.sleep(poll_interval)
+            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
     def upload_predictions(
         self,
@@ -1119,11 +1139,16 @@ class AsyncAgentGymClient:
         )
 
     async def resolve_traces(
-        self, benchmark_id: str, submission_id: str, trace_ids: Sequence[str]
+        self,
+        benchmark_id: str,
+        submission_id: str,
+        trace_ids: Sequence[str],
+        *,
+        timeout: float | None = None,  # noqa: ASYNC109 - HTTP phase timeout; caller owns deadline
     ) -> TraceResolutionList:
         """Resolve raw OTEL IDs to database UUIDs accepted with predictions."""
         return await self._transport.request(
-            resolve_traces_request(benchmark_id, submission_id, trace_ids)
+            replace(resolve_traces_request(benchmark_id, submission_id, trace_ids), timeout=timeout)
         )
 
     async def wait_for_resolved_traces(
@@ -1139,8 +1164,19 @@ class AsyncAgentGymClient:
         _validate_wait(max_wait, poll_interval)
         normalized = normalize_trace_ids(trace_ids)
         deadline = time.monotonic() + max_wait
+        by_id: dict[str, str | None] = {}
         while True:
-            resolution = await self.resolve_traces(benchmark_id, submission_id, normalized)
+            try:
+                budget = remaining(deadline)
+                resolution = await asyncio.wait_for(
+                    self.resolve_traces(benchmark_id, submission_id, normalized, timeout=budget),
+                    timeout=budget,
+                )
+            except (TimeoutError, httpx.TimeoutException) as error:
+                raise UnresolvedTraceError(
+                    [trace_id for trace_id in normalized if not by_id.get(trace_id)],
+                    resolved={key: value for key, value in by_id.items() if value is not None},
+                ) from error
             by_id = {item["trace_id"]: item["trace_db_id"] for item in resolution["data"]}
             unresolved = [trace_id for trace_id in normalized if not by_id.get(trace_id)]
             if not unresolved:
@@ -1149,12 +1185,12 @@ class AsyncAgentGymClient:
                 raise UnresolvedTraceError(
                     unresolved,
                     resolved={
-                        trace_id: cast(str, trace_db_id)
+                        trace_id: trace_db_id
                         for trace_id, trace_db_id in by_id.items()
                         if trace_db_id is not None
                     },
                 )
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
     async def upload_predictions(
         self,
@@ -1490,6 +1526,7 @@ class ExternalSubmissionSession:
     ) -> dict[str, str]:
         """Resolve staged raw IDs once, without blocking best-effort submission."""
         policy = normalize_trace_policy(trace_policy)
+        self._builder.validate_trace_coverage(policy)
         raw_trace_ids = self._builder.pending_trace_ids()
         if policy == "disabled" or not raw_trace_ids:
             return {}
@@ -1497,17 +1534,28 @@ class ExternalSubmissionSession:
 
         from promptic_sdk.agent_gym.runner import _flush_traces
 
-        _flush_traces()
         deadline = time.monotonic() + max_wait
+        try:
+            bounded_call(lambda: _flush_traces(max(1, int(remaining(deadline) * 1000))), deadline)
+        except Exception as error:
+            failure = UnresolvedTraceError(
+                raw_trace_ids,
+                code="trace_flush_timeout"
+                if isinstance(error, TimeoutError)
+                else "trace_export_failed",
+                phase="flush",
+            )
+            if policy == "required":
+                raise failure from error
+            _warn_omitted_traces(raw_trace_ids, failure)
+            return {}
         resolved: dict[str, str] = {}
         unresolved: list[str] = []
         last_error: Exception | None = None
         for chunk in _trace_chunks(raw_trace_ids):
             try:
                 database_ids = self.wait_for_resolved_traces(
-                    chunk,
-                    max_wait=max(0.0, deadline - time.monotonic()),
-                    poll_interval=poll_interval,
+                    chunk, max_wait=remaining(deadline), poll_interval=poll_interval
                 )
                 resolved.update(zip(chunk, database_ids, strict=True))
             except UnresolvedTraceError as error:
@@ -1518,6 +1566,8 @@ class ExternalSubmissionSession:
                 last_error = error
             except Exception as error:
                 if policy == "required":
+                    if isinstance(error, TimeoutError):
+                        raise UnresolvedTraceError(chunk, resolved=resolved) from error
                     raise
                 unresolved.extend(chunk)
                 last_error = error
@@ -1729,6 +1779,7 @@ class AsyncExternalSubmissionSession:
     ) -> dict[str, str]:
         """Resolve staged raw IDs once, without blocking best-effort submission."""
         policy = normalize_trace_policy(trace_policy)
+        self._builder.validate_trace_coverage(policy)
         raw_trace_ids = self._builder.pending_trace_ids()
         if policy == "disabled" or not raw_trace_ids:
             return {}
@@ -1736,17 +1787,31 @@ class AsyncExternalSubmissionSession:
 
         from promptic_sdk.agent_gym.runner import _flush_traces
 
-        _flush_traces()
         deadline = time.monotonic() + max_wait
+        try:
+            await bounded_call_async(
+                lambda: _flush_traces(max(1, int(remaining(deadline) * 1000))), deadline
+            )
+        except Exception as error:
+            failure = UnresolvedTraceError(
+                raw_trace_ids,
+                code="trace_flush_timeout"
+                if isinstance(error, TimeoutError)
+                else "trace_export_failed",
+                phase="flush",
+            )
+            if policy == "required":
+                raise failure from error
+            _warn_omitted_traces(raw_trace_ids, failure)
+            return {}
         resolved: dict[str, str] = {}
         unresolved: list[str] = []
         last_error: Exception | None = None
         for chunk in _trace_chunks(raw_trace_ids):
             try:
+                budget = remaining(deadline)
                 database_ids = await self.wait_for_resolved_traces(
-                    chunk,
-                    max_wait=max(0.0, deadline - time.monotonic()),
-                    poll_interval=poll_interval,
+                    chunk, max_wait=budget, poll_interval=poll_interval
                 )
                 resolved.update(zip(chunk, database_ids, strict=True))
             except UnresolvedTraceError as error:
@@ -1757,6 +1822,8 @@ class AsyncExternalSubmissionSession:
                 last_error = error
             except Exception as error:
                 if policy == "required":
+                    if isinstance(error, TimeoutError):
+                        raise UnresolvedTraceError(chunk, resolved=resolved) from error
                     raise
                 unresolved.extend(chunk)
                 last_error = error

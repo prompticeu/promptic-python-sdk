@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.24.2 (2026-09-25)
+
+## Bug Fixes
+
+- Bound agent trace finalization and require evidence for completion.
+
+
+## v0.24.1 (2026-09-23)
+
+## Bug Fixes
+
+- Automatically infer the benchmark scope for API keys in Agent Gym.
+
+
 ## v0.24.0 (2026-09-18)
 
 ## Features

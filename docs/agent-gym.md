@@ -16,6 +16,8 @@
 
 Authoring is available through the `gym.benchmarks` namespace. The SDK compiles typed schemas and
 evaluators into the platform's canonical Agent component contract.
+With an AI Application-scoped API key, the application is inferred for benchmark creation and
+listing. Login access tokens require `ai_application_id` (or `PROMPTIC_AI_APPLICATION_ID`).
 
 ```python
 from promptic_sdk import (
@@ -294,9 +296,29 @@ remain supported.
 Trace production and prediction upload are independent. Raw trace IDs are collected while cases
 run and resolved once immediately before submission. `trace_policy="best_effort"` is the
 default: unresolved IDs emit a warning and are omitted while predictions are still submitted.
-`trace_policy="required"` preserves fail-closed behavior, and `trace_policy="disabled"` skips trace
-resolution and removes trace evidence from the submitted predictions. The platform does not yet
-support attaching trace IDs after a run has been submitted.
+`trace_policy="required"` is an explicit caller opt-in: each successful case must supply at
+least one raw trace ID or already-resolved trace ID, and all supplied raw IDs must resolve.
+An empty list is not evidence. Failed candidate cases retain their execution-failure status.
+Output-only benchmarks can keep the default `best_effort` policy. The platform remains
+authoritative for the published revision's evidence requirements; this SDK option cannot
+waive them. `trace_policy="disabled"` skips resolution and removes trace evidence from
+submitted predictions. The platform does not yet support attaching trace IDs after a run
+has been submitted.
+
+`trace_max_wait` is a total trace-finalization budget: exporter flush, trace-resolution HTTP
+requests, and polling share one monotonic deadline. A zero budget performs no trace work.
+Prediction/artifact uploads and the final submit HTTP request have their own transport
+timeouts and are not included. Flush failures are no longer silently ignored. Under
+`required`, `UnresolvedTraceError.code` distinguishes `required_trace_missing`,
+`trace_export_failed`, `trace_flush_timeout`, and `trace_resolution_timeout`; `phase`,
+`case_ids` (for missing evidence), `trace_ids`, and `resolved` provide local diagnostics.
+Under `best_effort`, failures warn and omit unresolved links.
+
+Synchronous exporters run behind a bounded wait, including when they ignore their timeout.
+Python cannot forcibly terminate such an exporter: its call may finish later. The SDK caps
+outstanding background calls and does not wait for those daemon calls on return. This does
+not replace background batching or guarantee shutdown behavior of arbitrary third-party
+exporter hooks. No submission-error reporting or new resume protocol is introduced here.
 
 ## Isolated untrusted execution
 

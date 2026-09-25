@@ -54,11 +54,23 @@ class UnresolvedTraceError(Exception):
         trace_ids: Sequence[str],
         *,
         resolved: Mapping[str, str] | None = None,
+        code: str = "trace_resolution_timeout",
+        phase: str = "resolution",
+        case_ids: Sequence[int] = (),
     ) -> None:
         """Initialize with unresolved raw OTEL trace IDs."""
         self.trace_ids = list(trace_ids)
         self.resolved = dict(resolved or {})
-        super().__init__(f"{len(self.trace_ids)} trace ID(s) were not resolved")
+        self.code = code
+        self.phase = phase
+        self.case_ids = list(case_ids)
+        if self.case_ids:
+            detail = (
+                f"{len(self.case_ids)} successful case(s) have no trace evidence: {self.case_ids}"
+            )
+        else:
+            detail = f"{len(self.trace_ids)} trace ID(s) were not resolved"
+        super().__init__(f"{code}: {detail}")
 
 
 @dataclass(frozen=True)
@@ -535,6 +547,26 @@ class SubmissionPredictionBuilder:
             )
         )
 
+    def validate_trace_coverage(self, policy: TracePolicy) -> None:
+        """An explicit required policy needs a trace for each successful case.
+
+        This is a caller opt-in, not an inference from evaluator weights. The
+        server remains authoritative for revision-specific evidence requirements.
+        """
+        if policy != "required":
+            return
+        missing = [
+            case_id
+            for case_id, prediction in self.predictions.items()
+            if prediction["status"] == "succeeded"
+            and not self.raw_trace_ids.get(case_id)
+            and not (prediction.get("execution_refs") or {}).get("trace_ids")
+        ]
+        if missing:
+            raise UnresolvedTraceError(
+                [], code="required_trace_missing", phase="validation", case_ids=missing
+            )
+
     def validate_coverage(self) -> list[int]:
         """Return manifest case IDs after validating exact prediction coverage."""
         if self.manifest is None:
@@ -561,6 +593,7 @@ class SubmissionPredictionBuilder:
         """Compile exact manifest coverage into prediction batches and a scoring request."""
         ordered_ids = self.validate_coverage()
         policy = normalize_trace_policy(trace_policy)
+        self.validate_trace_coverage(policy)
         resolved = {key.lower(): value for key, value in (resolved_trace_ids or {}).items()}
         unresolved = [trace_id for trace_id in self.pending_trace_ids() if trace_id not in resolved]
         if policy == "required" and unresolved:

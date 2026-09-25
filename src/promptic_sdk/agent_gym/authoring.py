@@ -53,19 +53,14 @@ _ALLOWED_MIME_TYPES = {
 FileUploadCache = dict[tuple[str, str, int], dict[str, Any]]
 
 
-def _workspace_id(explicit: str | None, configured: str | None) -> str:
+def _workspace_id(explicit: str | None, configured: str | None) -> str | None:
     value = explicit or configured
-    if value is None:
-        raise ValueError(
-            "workspace_id is required for benchmark authoring; pass it to AgentGymClient "
-            "or benchmarks.create/list"
-        )
-    return require_uuid(value, "workspace_id")
+    return require_uuid(value, "ai_application_id") if value is not None else None
 
 
 def _create_body(
     *,
-    workspace_id: str,
+    workspace_id: str | None,
     name: str,
     goal: str,
     input_schema: Mapping[str, Any] | None,
@@ -84,10 +79,11 @@ def _create_body(
     if output_schema is not None and output_schema.get("type") != "object":
         raise ValueError("output_schema must be a JSON object schema")
     body: dict[str, Any] = {
-        "workspaceId": require_uuid(workspace_id, "workspace_id"),
         "name": normalized_name,
         "taskDescription": normalized_goal,
     }
+    if workspace_id is not None:
+        body["aiApplicationId"] = require_uuid(workspace_id, "ai_application_id")
     body["evaluators"] = [evaluator.as_request() for evaluator in evaluators]
     if input_schema is not None:
         body["inputSchema"] = dict(input_schema)
@@ -876,7 +872,11 @@ class AgentGymBenchmarks:
         """List editable benchmarks in a workspace."""
         resolved_workspace = _workspace_id(workspace_id, self._workspace_id)
         response = self._client._transport.request(  # noqa: SLF001
-            RequestSpec("GET", "/benchmarks", params={"workspaceId": resolved_workspace})
+            RequestSpec(
+                "GET",
+                "/benchmarks",
+                params={"aiApplicationId": resolved_workspace} if resolved_workspace else None,
+            )
         )
         return [
             AgentGymBenchmark(self, cast(BenchmarkDefinition, item)) for item in response["data"]
@@ -1269,7 +1269,11 @@ class AsyncAgentGymBenchmarks:
         """List editable benchmarks in a workspace."""
         resolved_workspace = _workspace_id(workspace_id, self._workspace_id)
         response = await self._client._transport.request(  # noqa: SLF001
-            RequestSpec("GET", "/benchmarks", params={"workspaceId": resolved_workspace})
+            RequestSpec(
+                "GET",
+                "/benchmarks",
+                params={"aiApplicationId": resolved_workspace} if resolved_workspace else None,
+            )
         )
         return [
             AsyncAgentGymBenchmark(self, cast(BenchmarkDefinition, item))
