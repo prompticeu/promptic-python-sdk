@@ -97,6 +97,7 @@ from promptic_sdk.agent_gym.submissions import (
     resolve_traces_request,
     revision_manifest_page_request,
     sanitized_manifest_json,
+    submission_failure_request,
     submission_status_request,
     submit_submission_request,
     upload_prediction_batch_request,
@@ -115,6 +116,15 @@ CaseInputT = TypeVar("CaseInputT")
 _PREDICTION_AUTO_FLUSH_SIZE = 1
 _PREDICTION_UPLOAD_MAX_ATTEMPTS = 3
 _PREDICTION_UPLOAD_RETRY_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+# Keep cancelled reports alive until the transport finishes its connection cleanup.
+_FAILURE_REPORT_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _finish_failure_report(task: asyncio.Task[Any]) -> None:
+    _FAILURE_REPORT_TASKS.discard(task)
+    if not task.cancelled():
+        # Cleanup can fail after the caller has already received its trace error.
+        task.exception()
 
 
 def _validate_wait(max_wait: float, poll_interval: float) -> None:
@@ -1637,11 +1647,15 @@ class ExternalSubmissionSession:
                 self._builder.set_manifest(self.get_manifest())
             self._builder.validate_coverage()
             policy = normalize_trace_policy(trace_policy)
-            resolved = self._resolve_staged_traces(
-                policy,
-                max_wait=trace_max_wait,
-                poll_interval=trace_poll_interval,
-            )
+            try:
+                resolved = self._resolve_staged_traces(
+                    policy,
+                    max_wait=trace_max_wait,
+                    poll_interval=trace_poll_interval,
+                )
+            except UnresolvedTraceError as error:
+                self._report_trace_failure(error)
+                raise
             predictions, body = self._builder.submission_payloads(
                 identity,
                 metadata,
@@ -1655,6 +1669,18 @@ class ExternalSubmissionSession:
             body,
             idempotency_key=idempotency_key,
         )
+
+    def _report_trace_failure(self, error: UnresolvedTraceError) -> None:
+        """Best-effort reporting must never replace the original submission exception."""
+        error.submission_failure_reported = False
+        try:
+            result = self.client._transport.request(
+                submission_failure_request(self.benchmark_id, self.submission_id, error)
+            )
+            error.submission_failure_reported = result.get("recorded") is True
+        except Exception:
+            # Older servers, offline clients, and failed reports preserve the original error.
+            pass
 
     def status(self) -> SubmissionStatus:
         """Fetch this session's current status."""
@@ -1894,11 +1920,15 @@ class AsyncExternalSubmissionSession:
                 self._builder.set_manifest(await self.get_manifest())
             self._builder.validate_coverage()
             policy = normalize_trace_policy(trace_policy)
-            resolved = await self._resolve_staged_traces(
-                policy,
-                max_wait=trace_max_wait,
-                poll_interval=trace_poll_interval,
-            )
+            try:
+                resolved = await self._resolve_staged_traces(
+                    policy,
+                    max_wait=trace_max_wait,
+                    poll_interval=trace_poll_interval,
+                )
+            except UnresolvedTraceError as error:
+                await self._report_trace_failure(error)
+                raise
             predictions, body = self._builder.submission_payloads(
                 identity,
                 metadata,
@@ -1912,6 +1942,30 @@ class AsyncExternalSubmissionSession:
             body,
             idempotency_key=idempotency_key,
         )
+
+    async def _report_trace_failure(self, error: UnresolvedTraceError) -> None:
+        """Report once with a separate short budget, preserving the original error."""
+        error.submission_failure_reported = False
+        report = None
+        try:
+            report = asyncio.create_task(
+                self.client._transport.request(
+                    submission_failure_request(self.benchmark_id, self.submission_id, error)
+                )
+            )
+            _FAILURE_REPORT_TASKS.add(report)
+            report.add_done_callback(_finish_failure_report)
+            # Unlike wait_for, wait does not await potentially slow cancellation cleanup.
+            done, _ = await asyncio.wait({report}, timeout=1)
+            if report in done:
+                error.submission_failure_reported = report.result().get("recorded") is True
+        except Exception:
+            pass
+        finally:
+            # Also cancel the request if the caller cancels submission; do not swallow
+            # that cancellation or delay it for transport cleanup.
+            if report is not None and not report.done():
+                report.cancel()
 
     async def status(self) -> SubmissionStatus:
         """Fetch this session's current status."""

@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.1.0 (2026-10-09)
+
+## Features
+
+- Support named input variables when creating experiments.
+
+
+## v1.0.0 (2026-10-08)
+
+## Bug Fixes
+
+- Aligned benchmark score response types in Agent Gym for consistent API responses.
+
+
+## Unreleased
+
+### Breaking changes
+
+- Align Agent Gym result types with the canonical benchmark score API: use
+  `aggregates[].overall_score` instead of `mean_score` or `evaluation.composite_score`, and
+  `summary.overall_score_delta` instead of `mean_score_delta`. No compatibility aliases are added.
+  These types require the matching API rollout; older servers still return the old fields.
+- Add nullable `aggregates[].evaluation_coverage` with evaluation outcomes and fully evaluated
+  case counts. Successful scores remain available when some evaluations fail.
+
+See [the Agent Gym migration guide](docs/agent-gym.md#score-field-migration) for details.
+
+## v0.24.3 (2026-10-01)
+
+## Bug Fixes
+
+- Report errors when benchmark trace finalization is aborted.
+- Improve benchmark trace identity handling when component names are unavailable.
+
+
 ## v0.24.2 (2026-09-25)
 
 ## Bug Fixes

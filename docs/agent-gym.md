@@ -293,6 +293,11 @@ inside the executor becomes a child of that span. This is opt-in and only operat
 trace IDs returned by the executor are merged and deduplicated, so already-running external systems
 remain supported.
 
+The platform links benchmark traces to the benchmark's AI Component using the benchmark ID on the
+case root or the trace evidence attached to a submitted prediction. Candidates do not need an
+`ai_component()` context to establish this association. Keep variant names in variant metadata;
+reserve explicit component contexts for work belonging to another actual AI Component.
+
 Trace production and prediction upload are independent. Raw trace IDs are collected while cases
 run and resolved once immediately before submission. `trace_policy="best_effort"` is the
 default: unresolved IDs emit a warning and are omitted while predictions are still submitted.
@@ -318,7 +323,27 @@ Synchronous exporters run behind a bounded wait, including when they ignore thei
 Python cannot forcibly terminate such an exporter: its call may finish later. The SDK caps
 outstanding background calls and does not wait for those daemon calls on return. This does
 not replace background batching or guarantee shutdown behavior of arbitrary third-party
-exporter hooks. No submission-error reporting or new resume protocol is introduced here.
+exporter hooks.
+
+When `session.submit()` (including the callback runner) aborts with an `UnresolvedTraceError`,
+the SDK makes one best-effort failure report before re-raising the original exception. Only its
+structured error code is sent, never raw trace IDs or exporter exception text. Reporting uses a
+separate one-second HTTP timeout (per transport operation), outside `trace_max_wait`; the async
+client also stops waiting for the report after one second and requests cancellation; transport
+cleanup may finish in the background without delaying the original error.
+`error.submission_failure_reported`
+is `True` only when the server confirms that this report changed the submission to failed.
+
+On a supporting server, the dashboard shows **Submission failed** with the reason. This closes
+that submission: fix the trace problem and create a new session with a new creation idempotency
+key. Automatic resume is not part of this behavior. Duplicate reports are harmless, and a late
+report cannot change a run already submitted for scoring. A timeout during the final submit
+request is **not** reported as an abort: retry that final request with the same idempotency key,
+because the server may have accepted it.
+
+If reporting fails (including offline clients or older servers), the original exception remains
+available and `submission_failure_reported` is `False`. The server may still show an unfinished
+upload until expiry. `best_effort` and `disabled` trace policies retain their existing behavior.
 
 ## Isolated untrusted execution
 
@@ -373,6 +398,14 @@ while the submission remains open. Once coverage is complete, call
 ```python
 with AgentGymClient() as gym:
     summary = gym.get_run_results(benchmark_id, run_id)
+    for aggregate in summary["aggregates"]:
+        print(aggregate["architecture"], aggregate["overall_score"])
+        coverage = aggregate["evaluation_coverage"]
+        if coverage is not None:
+            evaluations = coverage["evaluations"]
+            cases = coverage["cases"]
+            print(f"{evaluations['succeeded']}/{evaluations['expected']} evaluations succeeded")
+            print(f"{cases['fully_evaluated']}/{cases['total']} cases fully evaluated")
     print(summary["score_status_counts"])
     weakest = gym.list_case_results(benchmark_id, run_id, sort="score", limit=5)
 
@@ -388,11 +421,59 @@ Supported sorts are `score` (failures, then weakest first), `score_desc`, `laten
 `case`. `compare_runs()` performs a paired comparison only when both single-architecture runs use the
 same immutable revision, scorer contract, evaluator snapshot, and case set.
 
-Inspect `score_status_counts` before trusting an aggregate. It separates succeeded scores from
+### Overall score and coverage
+
+Each architecture has one authoritative `aggregates[].overall_score`, on a 0–1 scale. The server
+calculates the weighted mean of available evaluator and verifier-metric aggregate scores using their
+configured weights. Verifier metrics participate independently with their own weights. Do not
+recalculate this score by averaging case scores or per-field means. A score of `0` is valid;
+`None` means no overall score is available.
+
+Inspect `evaluation_coverage` alongside the score. For example, it can report **5/6 evaluations
+succeeded; 2/3 cases fully evaluated** while still returning the available overall and individual
+scores. Evaluation counts cover expected prediction/evaluator pairs and distinguish `succeeded`,
+`failed`, `skipped`, `insufficient_evidence`, and `missing` outcomes. A verifier evaluation succeeds
+only when all its configured metrics succeed with scores. Case totals cover predictions present in
+the run. Coverage is `None` when the frozen evaluator plan needed to establish expected counts is
+unavailable; it must not be interpreted as complete coverage.
+
+`score_status_counts` separately summarizes recorded score outcomes. It separates succeeded scores from
 failed, skipped, and insufficient-evidence outcomes. Verifier metrics appear as independent
 evaluator results with `source_evaluator_id` and `metric_key`; use those fields rather than parsing
 the opaque evaluator-result `id`. Per-field means declare a `succeeded_only` basis and therefore do
-not include the zero-filled failures used by official aggregate scores.
+not include the zero-filled failures used by official aggregate scores. Explicit required-evidence
+precondition failures are excluded from the affected evaluator/metric's denominator.
+
+For comparisons, read `summary.overall_score_delta` from `compare_runs()`:
+
+```python
+with AgentGymClient() as gym:
+    comparison = gym.compare_runs(
+        benchmark_id, parent_run_id=parent_run_id, candidate_run_id=candidate_run_id
+    )
+    delta = comparison["summary"]["overall_score_delta"]
+    if delta is not None:
+        print(f"Overall score change: {delta * 100:+.2f} percentage points")
+```
+
+This is the candidate's overall score minus the parent's, or `None` if either is unavailable.
+Individual case comparisons retain `score_delta`.
+
+### Score field migration
+
+The canonical score API removes the following fields without aliases. Update callers together with
+the API rollout and the matching SDK release; older servers still return the previous contract.
+The SDK passes response JSON through and does not translate between API versions.
+
+| Removed field | Use instead |
+| --- | --- |
+| `aggregates[].mean_score` | `aggregates[].overall_score` |
+| `evaluation.composite_score` | `aggregates[].overall_score` for the desired architecture |
+| `summary.mean_score_delta` | `summary.overall_score_delta` in comparison responses |
+
+This changes aggregation semantics for callers that previously used the case mean, so it can change
+the returned value as well as the field name. The evaluator, field, and case breakdowns remain
+available. Case-level `overall_score` retains its existing meaning.
 
 ## Artifact download safety
 

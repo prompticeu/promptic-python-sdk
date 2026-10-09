@@ -64,6 +64,8 @@ class UnresolvedTraceError(Exception):
         self.code = code
         self.phase = phase
         self.case_ids = list(case_ids)
+        # None: no report attempted; False: delivery/state confirmation failed.
+        self.submission_failure_reported: bool | None = None
         if self.case_ids:
             detail = (
                 f"{len(self.case_ids)} successful case(s) have no trace evidence: {self.case_ids}"
@@ -802,6 +804,14 @@ def submission_status_request(benchmark_id: str, submission_id: str) -> RequestS
     require_uuid(benchmark_id, "benchmark_id")
     require_uuid(submission_id, "submission_id")
     return RequestSpec("GET", f"/benchmarks/{benchmark_id}/submissions/{submission_id}")
+
+
+def submission_failure_request(
+    benchmark_id: str, submission_id: str, error: UnresolvedTraceError
+) -> RequestSpec:
+    """Report a known pre-submit failure without exporting exception text or raw trace IDs."""
+    spec = submission_status_request(benchmark_id, submission_id)
+    return RequestSpec("POST", f"{spec.path}/failure", json={"code": error.code}, timeout=1)
 
 
 def cancel_submission_request(benchmark_id: str, submission_id: str) -> RequestSpec:

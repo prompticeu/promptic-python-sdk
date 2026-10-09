@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import httpx
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from promptic_sdk import (
     AgentGymCase,
@@ -23,7 +27,14 @@ from promptic_sdk import (
     schema_for_model,
 )
 from promptic_sdk.agent_gym import ExternalPrediction
+from promptic_sdk.agent_gym.models import ExternalTaskSnapshot
+from promptic_sdk.agent_gym.runner import _case_trace
 from promptic_sdk.agent_gym.submissions import prediction_upload_batches
+from promptic_sdk.tracing import (
+    PROMPTIC_COMPONENT_ATTR,
+    _ComponentAttributeProcessor,
+    ai_component,
+)
 
 BENCHMARK_ID = "00000000-0000-4000-8000-000000000020"
 SUBMISSION_ID = "00000000-0000-4000-8000-000000000021"
@@ -171,6 +182,43 @@ def _case_result() -> dict[str, Any]:
         "diagnostics": None,
         "insights": [],
     }
+
+
+def test_case_trace_exports_benchmark_identity_without_component_context(monkeypatch):
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(_ComponentAttributeProcessor())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("agent-gym-test")
+    monkeypatch.setattr("promptic_sdk.tracing.is_tracing_configured", lambda: True)
+    monkeypatch.setattr(trace, "get_tracer", lambda *_args: tracer)
+    case = AgentGymCase(
+        CASE_ID, 0, ReportInput(topic="Agent Gym"), cast(ExternalTaskSnapshot, TASK)
+    )
+
+    with (
+        _case_trace(
+            True,
+            benchmark_id=BENCHMARK_ID,
+            submission_id=SUBMISSION_ID,
+            revision_id=REVISION_ID,
+            case=case,
+        ) as trace_id,
+        ai_component("variant-name"),
+        tracer.start_as_current_span("candidate"),
+    ):
+        pass
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    root = spans["agent_gym.case"]
+    child = spans["candidate"]
+    assert trace_id == f"{root.context.trace_id:032x}"
+    assert child.context.trace_id == root.context.trace_id
+    assert root.attributes is not None
+    assert child.attributes is not None
+    assert PROMPTIC_COMPONENT_ATTR not in root.attributes
+    assert root.attributes["promptic.agent_gym.benchmark_id"] == BENCHMARK_ID
+    assert child.attributes[PROMPTIC_COMPONENT_ATTR] == "variant-name"
 
 
 def test_full_trusted_callback_submit_and_inspect_workflow(tmp_path, monkeypatch):

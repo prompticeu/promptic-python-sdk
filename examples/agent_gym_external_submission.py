@@ -79,7 +79,9 @@ with AgentGymClient() as gym:
         sort="score",
         limit=5,
     )
-    print("Aggregates:", summary["aggregates"])
+    for aggregate in summary["aggregates"]:
+        print(aggregate["architecture"], "Overall score:", aggregate["overall_score"])
+        print("Evaluation coverage:", aggregate["evaluation_coverage"])
     for case_result in weakest["data"]:
         print(case_result["case_id"], case_result["overall_score"])
         print("Judgements:", case_result["judgements"])

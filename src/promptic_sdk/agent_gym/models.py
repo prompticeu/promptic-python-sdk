@@ -389,11 +389,43 @@ class ArchitectureReference(TypedDict):
     version: str
 
 
+class BenchmarkEvaluationCounts(TypedDict):
+    """Outcomes for expected prediction/evaluator pairs in the frozen evaluation plan."""
+
+    expected: int
+    succeeded: int
+    failed: int
+    skipped: int
+    insufficient_evidence: int
+    missing: int
+
+
+class BenchmarkCaseCoverage(TypedDict):
+    """Prediction count and cases where every planned evaluation succeeded."""
+
+    total: int
+    fully_evaluated: int
+
+
+class BenchmarkEvaluationCoverage(TypedDict):
+    """Evaluation and case coverage for one architecture."""
+
+    evaluations: BenchmarkEvaluationCounts
+    cases: BenchmarkCaseCoverage
+
+
 class BenchmarkAggregate(TypedDict):
-    """Aggregate metrics for one architecture."""
+    """Aggregate metrics for one architecture.
+
+    ``overall_score`` is the server's evaluator/metric-weighted score on a 0–1
+    scale, or None when unavailable. Partial evaluation can still have a score;
+    inspect ``evaluation_coverage`` alongside it. Coverage is None when the
+    frozen evaluator plan needed to determine expected counts is unavailable.
+    """
 
     architecture: ArchitectureReference
-    mean_score: float | None
+    overall_score: float | None
+    evaluation_coverage: BenchmarkEvaluationCoverage | None
     mean_per_field_scores: dict[str, float] | None
     mean_per_field_scores_basis: Literal["succeeded_only"]
     success_rate: float | None
@@ -497,7 +529,7 @@ class BenchmarkEvaluatorResult(TypedDict):
     weight: float
     architecture: ArchitectureReference
     score: float | None
-    mean_per_field_scores: dict[str, float]
+    mean_per_field_scores: dict[str, float] | None
     mean_per_field_scores_basis: Literal["succeeded_only"]
     case_count: int
     error: str | None
@@ -509,7 +541,6 @@ class BenchmarkEvaluation(TypedDict):
     id: str
     trigger: str
     status: str
-    composite_score: float | None
     evaluators: list[BenchmarkEvaluatorResult]
     created_at: str
     completed_at: str | None
@@ -647,9 +678,13 @@ class ComparedRun(TypedDict):
 
 
 class RunComparisonSummary(TypedDict):
-    """Aggregate deltas and case classifications."""
+    """Candidate-minus-parent deltas and case classifications.
 
-    mean_score_delta: float | None
+    ``overall_score_delta`` is None if either overall score is unavailable.
+    A delta of 0.15 means an improvement of 15 percentage points.
+    """
+
+    overall_score_delta: float | None
     success_rate_delta: float | None
     mean_latency_delta_ms: float | None
     improved_cases: int

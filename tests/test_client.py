@@ -774,3 +774,39 @@ class TestAsyncAIApplicationScope:
             "/api/v1/ai-application",
             "/api/v1/ai-application",
         ]
+
+
+def test_create_experiment_sends_named_inputs(monkeypatch):
+    monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+    variables = [{"name": "subject", "column": "subject"}]
+    with PrompticClient() as client:
+
+        def handler(request):
+            assert json.loads(request.content)["inputVariables"] == variables
+            return httpx.Response(201, json={"id": "exp"})
+
+        client._client = httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://promptic.eu/api/v1"
+        )
+        assert (
+            client.create_experiment("comp", "gpt-5.6-luna", input_variables=variables)["id"]
+            == "exp"
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_create_experiment_sends_named_inputs(monkeypatch):
+    monkeypatch.setenv("PROMPTIC_API_KEY", "pk_test")
+    variables = [{"name": "subject", "column": "subject"}]
+    async with AsyncPrompticClient() as client:
+
+        async def handler(request):
+            assert json.loads(request.content)["inputVariables"] == variables
+            return httpx.Response(201, json={"id": "exp"})
+
+        client._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="https://promptic.eu/api/v1"
+        )
+        assert (await client.create_experiment("comp", "gpt-5.6-luna", input_variables=variables))[
+            "id"
+        ] == "exp"

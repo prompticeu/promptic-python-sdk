@@ -47,6 +47,7 @@ from promptic_sdk.agent_gym.client import (
 from promptic_sdk.agent_gym.models import (
     BenchmarkCaseResult,
     BenchmarkCaseResultPage,
+    BenchmarkEvaluationCoverage,
     BenchmarkRunComparison,
     BenchmarkRunResults,
     BenchmarkScoreStatusCounts,
@@ -101,6 +102,7 @@ __all__ = [
     "DownloadedBenchmarkDataset",
     "BenchmarkCaseResult",
     "BenchmarkCaseResultPage",
+    "BenchmarkEvaluationCoverage",
     "BenchmarkDefinition",
     "BenchmarkFile",
     "ClassificationF1",

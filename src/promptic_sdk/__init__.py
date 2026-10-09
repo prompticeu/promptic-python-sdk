@@ -22,6 +22,7 @@ from promptic_sdk.agent_gym import (
     BenchmarkCaseResult,
     BenchmarkCaseResultPage,
     BenchmarkDefinition,
+    BenchmarkEvaluationCoverage,
     BenchmarkFile,
     BenchmarkRevision,
     BenchmarkRevisionDraft,
@@ -115,7 +116,7 @@ from promptic_sdk.tracing import (
     init,
 )
 
-__version__ = "0.24.2"
+__version__ = "1.1.0"
 __all__ = [
     "AgentEvaluator",
     "AgentGymAPIError",
@@ -140,6 +141,7 @@ __all__ = [
     "DownloadedBenchmarkDataset",
     "BenchmarkCaseResult",
     "BenchmarkCaseResultPage",
+    "BenchmarkEvaluationCoverage",
     "BenchmarkDefinition",
     "BenchmarkFile",
     "ClassificationF1",

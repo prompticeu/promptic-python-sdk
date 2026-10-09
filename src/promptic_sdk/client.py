@@ -405,6 +405,7 @@ class PrompticClient:
         optimizer: str = "prompticV2",
         hyperparameters: dict[str, Any] | None = None,
         initial_prediction_model_schema: dict[str, Any] | None = None,
+        input_variables: list[dict[str, str]] | None = None,
     ) -> Experiment:
         """Create a new experiment."""
         body: dict[str, Any] = {
@@ -424,6 +425,8 @@ class PrompticClient:
             body["hyperparameters"] = hyperparameters
         if initial_prediction_model_schema is not None:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
+        if input_variables is not None:
+            body["inputVariables"] = input_variables
         return self._post("/experiments", json=body)
 
     def create_tool_selection_experiment(
@@ -922,6 +925,7 @@ class AsyncPrompticClient:
         optimizer: str = "prompticV2",
         hyperparameters: dict[str, Any] | None = None,
         initial_prediction_model_schema: dict[str, Any] | None = None,
+        input_variables: list[dict[str, str]] | None = None,
     ) -> Experiment:
         """Create a new experiment."""
         body: dict[str, Any] = {
@@ -941,6 +945,8 @@ class AsyncPrompticClient:
             body["hyperparameters"] = hyperparameters
         if initial_prediction_model_schema is not None:
             body["initialPredictionModelSchema"] = initial_prediction_model_schema
+        if input_variables is not None:
+            body["inputVariables"] = input_variables
         return await self._post("/experiments", json=body)
 
     async def create_tool_selection_experiment(

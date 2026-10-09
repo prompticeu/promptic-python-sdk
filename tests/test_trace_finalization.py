@@ -38,6 +38,17 @@ def builder(raw=True):
     return value
 
 
+@pytest.fixture(autouse=True)
+def mock_failure_reporting(monkeypatch):
+    """These tests isolate the trace budget; reporting has its own transport tests."""
+    monkeypatch.setattr(ExternalSubmissionSession, "_report_trace_failure", lambda *args: None)
+
+    async def report(*args):
+        return None
+
+    monkeypatch.setattr(AsyncExternalSubmissionSession, "_report_trace_failure", report)
+
+
 def test_required_policy_rejects_empty_ids_per_successful_case():
     value = builder(raw=False)
     with pytest.raises(UnresolvedTraceError) as failure:
