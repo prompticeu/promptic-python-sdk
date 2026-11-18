@@ -1,0 +1,44 @@
+{
+  "name": "Question answering with independent judges",
+  "goal": "Answer the question and identify the supporting pages.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "question": {"type": "string"}
+    },
+    "required": ["question"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "answer": {"type": "string"},
+      "pages": {"type": "array", "items": {"type": "integer"}}
+    },
+    "required": ["answer", "pages"]
+  },
+  "evaluators": [
+    {
+      "kind": "field_level_judge",
+      "id": "answer-quality",
+      "name": "Answer quality",
+      "weight": 2,
+      "fields": {
+        "answer": {
+          "method": "judge",
+          "judgeInstructions": "Check that the answer is accurate and addresses the question."
+        },
+        "pages": {"method": "array_exact", "include": false}
+      }
+    },
+    {
+      "kind": "field_level_judge",
+      "id": "supporting-pages",
+      "name": "Supporting pages",
+      "weight": 1,
+      "fields": {
+        "answer": {"method": "exact", "include": false},
+        "pages": {"method": "array_exact"}
+      }
+    }
+  ]
+}

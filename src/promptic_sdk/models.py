@@ -8,7 +8,9 @@ from typing_extensions import TypedDict
 
 # ── Enums as Literals ────────────────────────────────────────────────
 
-ExperimentStatus = Literal["pending", "scheduled", "running", "completed", "failed"]
+ExperimentStatus = Literal[
+    "pending", "scheduled", "running", "canceling", "canceled", "completed", "failed"
+]
 ModelProvider = Literal["openai", "openrouter", "custom", "google"]
 OptimizerType = Literal["promptic", "prompticV2", "miproV2", "bootstrapFewShot", "gepa"]
 TaskType = Literal["classification", "textGeneration", "structuredOutput", "toolSelection"]
@@ -72,10 +74,33 @@ class AvailableModelList(TypedDict):
     data: list[AvailableModel]
 
 
+class OptimizationBrief(TypedDict, total=False):
+    """Optimizer-only instructions; keys use the API's camelCase spelling."""
+
+    rules: list[str]
+    instructions: str
+    context: str
+    constraints: str
+
+
+class ComponentOptimizationRules(TypedDict):
+    """Versioned rules shared across an AI Component's experiments."""
+
+    version: int
+    brief: OptimizationBrief
+
+
+class OptimizationGuidance(OptimizationBrief):
+    """Server-captured experiment guidance and inherited component rules."""
+
+    contractVersion: Literal[1]
+    componentRules: ComponentOptimizationRules
+
+
 # ── Components ───────────────────────────────────────────────────────
 
 
-class Component(TypedDict):
+class _ComponentRequired(TypedDict):
     """AI component record."""
 
     id: str
@@ -85,6 +110,12 @@ class Component(TypedDict):
     aiApplicationId: str
     createdAt: str
     updatedAt: str
+
+
+class Component(_ComponentRequired, total=False):
+    """AI Component, including shared rules when supported by the server."""
+
+    optimizationRules: ComponentOptimizationRules | None
 
 
 class ComponentList(TypedDict):
@@ -145,9 +176,9 @@ class _ExperimentRequired(TypedDict):
 class Experiment(_ExperimentRequired, total=False):
     """Experiment record.
 
-    The three ``*SystemPrompt`` fields only ship with the tool-selection
-    optimizer; older API responses (that predate those columns) omit them, so
-    they are optional. They live on this ``total=False`` subclass — rather than
+    Tool-selection system-prompt fields and cancellation audit fields may be
+    omitted by older API responses, so they are optional.
+    They live on this ``total=False`` subclass — rather than
     as ``NotRequired`` markers on a single TypedDict — because this module uses
     ``from __future__ import annotations``: under postponed evaluation the
     ``NotRequired`` wrapper is stored as a string and the runtime metadata
@@ -156,10 +187,16 @@ class Experiment(_ExperimentRequired, total=False):
     at runtime for anyone introspecting the model.
     """
 
+    # Optional for compatibility with servers predating run cancellation.
+    cancelRequestedAt: str | None
+    cancelRequestedBy: str | None
+    canceledAt: str | None
+
     # Tool-selection experiments only. ``systemPrompt`` is the fixed system
     # prompt used as context during evaluation. ``optimizeSystemPrompt`` is
     # the toggle that asks the optimizer to also rewrite the system prompt;
     # when on, the best variant is persisted as ``optimizedSystemPrompt``.
+    optimizationGuidance: OptimizationGuidance | None
     systemPrompt: str | None
     optimizeSystemPrompt: bool
     optimizedSystemPrompt: str | None
@@ -169,6 +206,12 @@ class ExperimentList(TypedDict):
     """Paginated list of experiments."""
 
     data: list[Experiment]
+
+
+class ExperimentCancellation(TypedDict):
+    """Cancellation outcome; ``canceling`` is not yet a terminal state."""
+
+    status: Literal["canceling", "canceled"]
 
 
 class ExperimentStarted(TypedDict):

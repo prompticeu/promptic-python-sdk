@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.4.0 (2026-11-04)
+
+## Features
+
+- Exposed optimization rules in the SDK and CLI.
+
+
+## v1.3.0 (2026-10-24)
+
+## Features
+
+- Added support for multiple field-level judge evaluators.
+
+
+## v1.2.1 (2026-10-22)
+
+## Bug Fixes
+
+- Made evaluator validation errors more actionable by providing clearer guidance when configuration is invalid.
+
+
+## v1.2.0 (2026-10-09)
+
+## Features
+
+- Added support for cancelling SDK and CLI experiments.
+
+
 ## v1.1.0 (2026-10-09)
 
 ## Features

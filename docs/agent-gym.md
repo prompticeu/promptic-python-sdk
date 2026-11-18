@@ -176,7 +176,7 @@ the revision lifecycle through `revisions`, `draft`, `resolve-draft`, `publish-d
 `abandon-draft`, and `reevaluate`.
 
 The Output schema and evaluators are configured explicitly. The schema defines valid output data;
-the field-level evaluator defines which fields contribute and how they are scored:
+each field-level evaluator defines which fields contribute and how they are scored:
 
 ```python
 from promptic_sdk import FieldLevelJudge, FieldScoring
@@ -192,12 +192,22 @@ benchmark.configure(
     },
     evaluators=[
         FieldLevelJudge(
+            id="acceptance-rules",
             fields={
                 "acceptance_criteria_value": FieldScoring(method="exact"),
+                "test_method": FieldScoring(method="exact", include=False),
+                "comment": FieldScoring(method="exact", include=False),
+            },
+        ),
+        FieldLevelJudge(
+            id="method-quality",
+            weight=2,
+            fields={
+                "acceptance_criteria_value": FieldScoring(method="exact", include=False),
                 "test_method": FieldScoring(method="embedding"),
                 "comment": FieldScoring(method="exact", include=False),
-            }
-        )
+            },
+        ),
     ],
 )
 ```
@@ -206,6 +216,27 @@ benchmark.configure(
 fields, and `array_exact`, `array_similarity`, or `array_judge` for array fields.
 Use `judge_instructions` with `judge` or `array_judge`. Configure every field with
 `method`; `strategy` and `array_strategy` are unsupported.
+
+Multiple `FieldLevelJudge` instances can score different fields or apply different methods,
+per-field judge instructions, models, and weights to the same fields. Each evaluator keeps its own
+identity and results. There is no four-evaluator collection limit. `ClassificationF1`, `VerifierAgent`,
+and `ExpectedBehaviorJudge` remain limited to one instance each; distinct IDs do not bypass that
+restriction.
+
+Every typed evaluator accepts an optional keyword-only `id`. Explicit IDs must be non-empty strings
+and unique across the entire evaluator collection, including different kinds. Reuse the same IDs
+in `benchmark.configure(evaluators=[...])` to preserve identity when editing or reordering judges.
+When omitted, the SDK leaves `id` out of the request and the server generates collision-free IDs.
+Local duplicate IDs raise `ValueError` with code `duplicate_evaluator_id` and issue paths such as
+`evaluators[1].id`; duplicate singleton kinds retain `duplicate_evaluator_kind`.
+
+The same behavior applies to synchronous and asynchronous create/configure calls and
+`promptic agent-gym apply`. CLI JSON entries use `"id": "stable-id"`; see
+[`examples/agent_gym_multiple_judges.json`](../examples/agent_gym_multiple_judges.json) for a complete
+configuration. Multiple judges require a platform deployment containing the corresponding API
+support; older deployments can still reject repeated field-level judges. Raw evaluator graphs
+must supply distinct IDs for additional judges rather than relying on the authoring API's ID
+generation.
 
 Cases use only canonical `input`, optional expected `output`, and optional `expected_behavior`.
 Place `BenchmarkFile` values directly at file fields declared by the corresponding schema.

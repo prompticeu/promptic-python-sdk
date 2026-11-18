@@ -97,6 +97,139 @@ async def _replace_async(client: AsyncAgentGymClient, handler: Any, direct: Any)
     client._transport.direct = httpx.AsyncClient(transport=httpx.MockTransport(direct))
 
 
+def _multiple_judges(with_ids: bool) -> list[FieldLevelJudge]:
+    return [
+        FieldLevelJudge(
+            fields={
+                "answer": FieldScoring("judge", judge_instructions=f"Check criterion {index}."),
+                "pages": "array_exact" if index % 2 else "array_similarity",
+            },
+            model=f"judge-model-{index}",
+            name=f"Judge {index}",
+            weight=index + 1,
+            id=f"judge-{index}" if with_ids else None,
+        )
+        for index in range(5)
+    ]
+
+
+def _expected_judges(with_ids: bool) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": "field_level_judge",
+            **({"id": f"judge-{index}"} if with_ids else {}),
+            "name": f"Judge {index}",
+            "model": f"judge-model-{index}",
+            "weight": index + 1,
+            "required": False,
+            "fields": {
+                "answer": {
+                    "include": True,
+                    "method": "judge",
+                    "judge_instructions": f"Check criterion {index}.",
+                    "weight": 1.0,
+                },
+                "pages": {
+                    "include": True,
+                    "method": "array_exact" if index % 2 else "array_similarity",
+                    "weight": 1.0,
+                },
+            },
+        }
+        for index in range(5)
+    ]
+
+
+@pytest.mark.parametrize("with_ids", [True, False])
+def test_sync_multiple_judges_create_and_update_preserve_independent_configs(with_ids):
+    """Check outgoing HTTP contracts only; ID generation belongs to the real server."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_benchmark())
+
+    judges = _multiple_judges(with_ids)
+    with AgentGymClient(api_key="ptc_test", workspace_id=WORKSPACE_ID) as client:
+        _replace_sync(client, handler, lambda request: httpx.Response(500))
+        benchmark = client.benchmarks.create(name="QA", goal="Answer questions", evaluators=judges)
+        benchmark.configure(evaluators=list(reversed(judges)))
+
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("POST", "/api/v1/benchmarks"),
+        ("PATCH", f"/api/v1/benchmarks/{BENCHMARK_ID}"),
+    ]
+    assert json.loads(requests[0].content)["evaluators"] == _expected_judges(with_ids)
+    assert json.loads(requests[1].content)["evaluators"] == list(
+        reversed(_expected_judges(with_ids))
+    )
+
+
+@pytest.mark.parametrize("with_ids", [True, False])
+async def test_async_multiple_judges_create_and_update_preserve_independent_configs(with_ids):
+    """Exercise the async HTTP contract without requiring a deployed authoring API."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_benchmark())
+
+    judges = _multiple_judges(with_ids)
+    async with AsyncAgentGymClient(api_key="ptc_test", workspace_id=WORKSPACE_ID) as client:
+        await _replace_async(client, handler, lambda request: httpx.Response(500))
+        benchmark = await client.benchmarks.create(
+            name="QA", goal="Answer questions", evaluators=judges
+        )
+        await benchmark.configure(evaluators=list(reversed(judges)))
+
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("POST", "/api/v1/benchmarks"),
+        ("PATCH", f"/api/v1/benchmarks/{BENCHMARK_ID}"),
+    ]
+    assert json.loads(requests[0].content)["evaluators"] == _expected_judges(with_ids)
+    assert json.loads(requests[1].content)["evaluators"] == list(
+        reversed(_expected_judges(with_ids))
+    )
+
+
+def test_evaluator_ids_preserve_existing_positional_constructors():
+    metric = VerifierMetric("quality", "Quality", "Check accuracy.")
+    evaluators = [
+        ClassificationF1(("label",), "F1", "Labels", 2, True, 0.8, id="classification"),
+        FieldLevelJudge(
+            {"answer": "exact"}, "model", "Fields", "Answer", 3, True, 0.9, id="fields"
+        ),
+        VerifierAgent(
+            "Check output.",
+            "model",
+            "Verifier",
+            "Quality",
+            1,
+            True,
+            0.7,
+            EvidencePolicy(),
+            (metric,),
+            InvestigationBudget(),
+            {},
+            id="verifier",
+        ),
+        ExpectedBehaviorJudge("Behavior", "Compliance", 1, True, 0.6, "model", {}, id="behavior"),
+    ]
+    requests = [evaluator.as_request() for evaluator in evaluators]
+    assert [request["id"] for request in requests] == [
+        "classification",
+        "fields",
+        "verifier",
+        "behavior",
+    ]
+    assert [request["threshold"] for request in requests] == [0.8, 0.9, 0.7, 0.6]
+    assert [request["name"] for request in requests] == ["F1", "Fields", "Verifier", "Behavior"]
+    assert all(request["required"] is True for request in requests)
+    assert requests[0]["fieldPaths"] == ["label"]
+    assert requests[1]["fields"]["answer"]["method"] == "exact"
+    assert requests[2]["metrics"] == [metric.as_request()]
+
+
 def test_create_configures_schemas_evaluators_and_nested_files(tmp_path):
     bodies: list[dict[str, Any]] = []
     source = tmp_path / "invoice.pdf"

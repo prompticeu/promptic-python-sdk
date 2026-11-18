@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TypedDict, cast
+
+from promptic_sdk.agent_gym._validation import EvaluatorConfigurationError
 
 FieldMethod = Literal[
     "exact", "embedding", "contains", "judge", "array_exact", "array_similarity", "array_judge"
@@ -179,6 +181,7 @@ class AgentEvaluator(ABC):
     """Typed base for one independently configured Agent evaluator."""
 
     kind: ClassVar[EvaluatorKind]
+    id: str | None = None
     name: str | None
     description: str | None
     weight: float
@@ -187,6 +190,8 @@ class AgentEvaluator(ABC):
     supports_evaluator_weight: ClassVar[bool] = True
 
     def _validate_common(self) -> None:
+        if self.id is not None and (not isinstance(self.id, str) or not self.id):
+            raise ValueError("evaluator id must be a non-empty string when provided")
         if self.weight <= 0:
             raise ValueError("evaluator weight must be positive")
         if self.threshold is not None and not 0 <= self.threshold <= 1:
@@ -200,6 +205,7 @@ class AgentEvaluator(ABC):
         """Serialize to the canonical Agent component authoring API."""
         return {
             "kind": self.kind,
+            **({"id": self.id} if self.id is not None else {}),
             **({"weight": self.weight} if self.supports_evaluator_weight else {}),
             "required": self.required,
             **({"name": self.name} if self.name else {}),
@@ -219,6 +225,7 @@ class ClassificationF1(AgentEvaluator):
     weight: float = 1.0
     required: bool = False
     threshold: float | None = None
+    id: str | None = field(default=None, kw_only=True)
     kind: ClassVar[Literal["f1"]] = "f1"
 
     def __post_init__(self) -> None:
@@ -242,6 +249,7 @@ class FieldLevelJudge(AgentEvaluator):
     weight: float = 1.0
     required: bool = False
     threshold: float | None = None
+    id: str | None = field(default=None, kw_only=True)
     kind: ClassVar[Literal["field_level_judge"]] = "field_level_judge"
 
     def __post_init__(self) -> None:
@@ -282,6 +290,7 @@ class VerifierAgent(AgentEvaluator):
     budget: InvestigationBudget = field(default_factory=InvestigationBudget)
     metric_bindings: Mapping[str, MetricBinding] = field(default_factory=dict)
     rubric: str | None = field(default=None, kw_only=True, repr=False)
+    id: str | None = field(default=None, kw_only=True)
     kind: ClassVar[Literal["verifier_agent"]] = "verifier_agent"
     supports_evaluator_weight: ClassVar[bool] = False
 
@@ -366,6 +375,7 @@ class ExpectedBehaviorJudge(AgentEvaluator):
     threshold: float | None = None
     model: str | None = None
     metric_bindings: Mapping[str, MetricBinding] = field(default_factory=dict)
+    id: str | None = field(default=None, kw_only=True)
     kind: ClassVar[Literal["expected_behavior_judge"]] = "expected_behavior_judge"
     supports_evaluator_weight: ClassVar[bool] = False
 
@@ -675,3 +685,49 @@ class PublishedBenchmarkRevision:
             bool(value.get("active")),
             bool(value.get("created")),
         )
+
+
+def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
+    """Require unique explicit IDs and one evaluator per kind except field-level judges."""
+    seen_ids: dict[str, int] = {}
+    seen_kinds: dict[str, int] = {}
+    issues: list[dict[str, Any]] = []
+    for index, evaluator in enumerate(evaluators):
+        if evaluator.id is not None:
+            if evaluator.id in seen_ids:
+                first_index = seen_ids[evaluator.id]
+                issues.append(
+                    {
+                        "code": "duplicate_evaluator_id",
+                        "path": ["evaluators", index, "id"],
+                        "firstIndex": first_index,
+                        "message": (
+                            f"Evaluator ID '{evaluator.id}' must be unique; first configured at "
+                            f"evaluators[{first_index}].id. Choose a distinct id or omit it "
+                            "to let the server generate one."
+                        ),
+                    }
+                )
+            else:
+                seen_ids[evaluator.id] = index
+        kind = evaluator.kind
+        if kind == "field_level_judge":
+            continue
+        if kind not in seen_kinds:
+            seen_kinds[kind] = index
+            continue
+        issues.append(
+            {
+                "code": "duplicate_evaluator_kind",
+                "path": ["evaluators", index, "kind"],
+                "kind": kind,
+                "firstIndex": seen_kinds[kind],
+                "message": (
+                    f"Duplicate {kind}; first configured at evaluators[{seen_kinds[kind]}].kind. "
+                    f"Only one evaluator of kind '{kind}' is supported. "
+                    "Combine its configuration into one evaluator."
+                ),
+            }
+        )
+    if issues:
+        raise EvaluatorConfigurationError(issues)

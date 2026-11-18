@@ -64,6 +64,7 @@ from promptic_sdk.models import (
     Component,
     ComponentCreated,
     ComponentList,
+    ComponentOptimizationRules,
     Dataset,
     DatasetCase,
     DatasetCaseCreate,
@@ -78,6 +79,7 @@ from promptic_sdk.models import (
     EvaluatorList,
     EvaluatorType,
     Experiment,
+    ExperimentCancellation,
     ExperimentList,
     ExperimentStarted,
     ExperimentStatus,
@@ -87,6 +89,8 @@ from promptic_sdk.models import (
     IterationScore,
     IterationWithScores,
     ModelProvider,
+    OptimizationBrief,
+    OptimizationGuidance,
     OptimizerType,
     PromptExperimentTaskType,
     PromptFormat,
@@ -116,7 +120,7 @@ from promptic_sdk.tracing import (
     init,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.4.0"
 __all__ = [
     "AgentEvaluator",
     "AgentGymAPIError",
@@ -187,6 +191,9 @@ __all__ = [
     "AvailableModel",
     "AvailableModelList",
     "Component",
+    "OptimizationBrief",
+    "OptimizationGuidance",
+    "ComponentOptimizationRules",
     "ComponentCreated",
     "ComponentList",
     "Dataset",
@@ -207,6 +214,7 @@ __all__ = [
     "EvaluatorList",
     "EvaluatorType",
     "Experiment",
+    "ExperimentCancellation",
     "ExperimentList",
     "ExperimentStarted",
     "ExperimentStatus",

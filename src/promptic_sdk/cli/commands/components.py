@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
+from typing import cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from promptic_sdk.cli import get_client
+from promptic_sdk.models import OptimizationBrief
 
 components_app = typer.Typer(help="Manage AI components.")
 console = Console()
@@ -104,3 +107,40 @@ def delete_component(
         client.delete_component(component_id)
 
     console.print("[green]Component deleted.[/green]")
+
+
+@components_app.command("set-rules")
+def set_component_rules(
+    component_id: str = typer.Argument(help="AI Component ID."),
+    guidance_file: Path = typer.Option(
+        ...,
+        "--guidance",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="JSON file containing shared optimization rules.",
+    ),
+    version: int = typer.Option(
+        ...,
+        "--version",
+        min=0,
+        help="Current optimizationRules.version; zero when no rules are saved.",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Replace shared rules without overwriting a concurrent edit."""
+    try:
+        brief = json.loads(guidance_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"Could not read valid JSON from {guidance_file}: {exc}") from exc
+    if not isinstance(brief, dict):
+        raise typer.BadParameter("--guidance must contain a JSON object")
+    with get_client() as client:
+        result = client.update_component_rules(
+            component_id, cast(OptimizationBrief, brief), expected_version=version
+        )
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+    else:
+        console.print("[green]AI Component rules updated.[/green]")

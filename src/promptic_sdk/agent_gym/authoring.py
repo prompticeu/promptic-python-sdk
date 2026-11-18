@@ -26,6 +26,7 @@ from promptic_sdk.agent_gym.authoring_models import (
     CreatedBenchmarkCase,
     PublishedBenchmarkRevision,
     StagedBenchmarkUpdate,
+    validate_evaluators,
 )
 from promptic_sdk.agent_gym.models import PresignedUpload
 from promptic_sdk.agent_gym.submissions import require_uuid, validate_artifact_path
@@ -84,6 +85,7 @@ def _create_body(
     }
     if workspace_id is not None:
         body["aiApplicationId"] = require_uuid(workspace_id, "ai_application_id")
+    validate_evaluators(evaluators)
     body["evaluators"] = [evaluator.as_request() for evaluator in evaluators]
     if input_schema is not None:
         body["inputSchema"] = dict(input_schema)
@@ -707,6 +709,7 @@ class AgentGymBenchmark:
         if output_schema is not None:
             body["targetSchema"] = dict(output_schema)
         if evaluators is not None:
+            validate_evaluators(evaluators)
             body["evaluators"] = [evaluator.as_request() for evaluator in evaluators]
         response = self._manager._client._transport.request(  # noqa: SLF001
             RequestSpec(
@@ -1102,6 +1105,7 @@ class AsyncAgentGymBenchmark:
         if output_schema is not None:
             body["targetSchema"] = dict(output_schema)
         if evaluators is not None:
+            validate_evaluators(evaluators)
             body["evaluators"] = [evaluator.as_request() for evaluator in evaluators]
         response = await self._manager._client._transport.request(  # noqa: SLF001
             RequestSpec(

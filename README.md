@@ -427,13 +427,35 @@ Both clients provide typed methods for the full Promptic REST API:
 | Models         | `models.list` (AI Application-scoped available models)                   |
 | Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
-| Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment` |
+| Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment`, `cancel_experiment` |
 | Dataset cases | `list_dataset_cases`, `get_dataset_case`, `create_dataset_cases`, `update_dataset_case`, `delete_dataset_case` |
 | Evaluators     | `list_evaluators`, `create_evaluators`, `update_evaluator`, `delete_evaluator` |
 | Iterations     | `list_iterations`, `get_iteration`, `get_best_iteration`                |
 | Deployments    | `get_deployment`, `deploy`, `undeploy`, `get_deployed_prompt`           |
 
 The client reads `PROMPTIC_API_KEY` and `PROMPTIC_ENDPOINT` from the environment, or accepts them as constructor arguments.
+
+### Cancel an experiment
+
+```python
+result = client.cancel_experiment(experiment_id)  # Async: await client.cancel_experiment(...)
+print(result["status"])  # "canceling" or "canceled"
+status = client.get_experiment(experiment_id)["experimentStatus"]
+```
+
+Cancellation requires a server with experiment-cancellation support. The method
+returns after requesting cancellation; it does not wait for the worker to stop.
+Ownerless pending/scheduled runs are canceled immediately. Running runs become
+`canceling` until the worker reaches a safe boundary; only `canceled` confirms
+the stop. In-flight work may still complete and incur usage charges, and saved
+results remain. Repeated cancellation requests are idempotent. A completed or
+failed experiment returns `PrompticAPIError` with status `409`; authentication
+and not-found errors retain their `401`/`404` status codes.
+
+`ExperimentStatus` includes `canceling` and `canceled`. When polling, treat
+`completed`, `failed`, and `canceled` as terminal, use a timeout, and report the
+actual outcome. A local timeout or Ctrl-C does not cancel the remote experiment.
+Cancel and wait for a terminal status before deleting an active experiment.
 
 ## CLI
 
@@ -442,6 +464,25 @@ The `promptic` CLI mirrors the API client and supports both human-readable table
 ```
 promptic [command] [subcommand] [options]
 ```
+
+Agent configurations support multiple `FieldLevelJudge` evaluators, each with independent fields,
+model, and weight. All typed evaluators accept an optional keyword-only `id="stable-id"`;
+CLI JSON configurations preserve the same `id` field. Omit IDs to let the server generate them,
+or reuse explicit IDs to retain evaluator identity when updating or reordering a configuration.
+SDK create/configure calls and CLI imports reject duplicate explicit IDs and repeated `f1`,
+`verifier_agent`, or `expected_behavior_judge` kinds before sending any request, with the
+conflicting indices and a correction. Multiple field-level judges require a server deployment
+with support for them. See the [authoring guide](docs/agent-gym.md) and
+[CLI configuration example](examples/agent_gym_multiple_judges.json).
+
+API exceptions include validation paths and messages in their text while preserving structured
+`AgentGymAPIError.code` and `.details`. This also works with older API responses containing
+`details.fieldErrors` or `issues`.
+
+For machine-readable errors, use `promptic --error-format json agent-gym apply agent.json`.
+Application and validation failures exit with code 1 and emit one JSON object on stderr containing
+`error`, `message`, `status_code` (null for local failures), and `details`. Normal command output
+remains on stdout. Without this option, errors are printed as plain text with field paths.
 
 ### Commands
 
@@ -470,6 +511,7 @@ promptic [command] [subcommand] [options]
 | `promptic experiments update <id>`     | Update an experiment                   |
 | `promptic experiments delete <id>`     | Delete an experiment                   |
 | `promptic experiments start <id>`      | Start an experiment                    |
+| `promptic experiments cancel <id>`     | Request cancellation (does not wait)   |
 | `promptic evaluators list`             | List evaluators for an experiment      |
 | `promptic evaluators add`              | Add an evaluator                       |
 | `promptic evaluators delete <id>`      | Delete an evaluator                    |
@@ -491,6 +533,11 @@ promptic [command] [subcommand] [options]
 | `promptic datasets cases delete <id> <case-id>` | Delete a canonical case       |
 
 All list commands support `--json` for machine-readable output.
+
+Use `promptic experiments cancel <id>` to request cancellation with confirmation,
+or `promptic experiments cancel <id> --yes --json` for scripts. Exit code zero
+means the request succeeded, not necessarily that the worker has stopped. Check
+`promptic experiments get <id> --json` for the final status.
 
 `promptic experiments create` accepts `--hyperparameters <file>` and
 `--output-schema <file>` JSON documents. Use `--start` to schedule the experiment immediately.
@@ -527,3 +574,7 @@ uv run ruff format .
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
+## Optimization guidance
+
+Create and update experiments with `optimization_guidance={"rules": ["Focus on confusion between X and Y."]}`. Both sync and async clients support guidance rules, including tool-selection experiments. Use `update_component_rules(..., expected_version=...)` for shared rules, and CLI `--guidance guidance.json` for experiment rules. See [the guidance reference](docs/optimization-guidance.md) for examples, limits, and version handling. Requires a matching server release.

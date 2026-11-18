@@ -9,6 +9,7 @@ from typing import Any, TypeAlias
 
 import httpx
 
+from promptic_sdk.agent_gym._validation import validation_message
 from promptic_sdk.client import PrompticAPIError
 
 _DEFAULT_ENDPOINT = "https://promptic.eu"
@@ -44,7 +45,7 @@ class AgentGymAPIError(PrompticAPIError):
         """Initialize an API error without retaining sensitive request data."""
         self.code = code
         self.details = details
-        rendered = message or code
+        rendered = validation_message(message or code, details)
         super().__init__(status_code, f"{code}: {rendered}" if message else rendered)
         self.message = rendered
 
@@ -66,22 +67,24 @@ def _api_error(response: httpx.Response) -> AgentGymAPIError:
     except Exception:
         body = None
     if isinstance(body, dict):
-        raw_code = body.get("error")
+        raw_code = body.get("code") or body.get("error")
         code = (
             raw_code if isinstance(raw_code, str) and raw_code else f"http_{response.status_code}"
         )
-        raw_message = body.get("message")
+        raw_message = body.get("message") or (body.get("error") if body.get("code") else None)
         message = raw_message if isinstance(raw_message, str) and raw_message else None
         raw_details = body.get("details")
-        details = raw_details if isinstance(raw_details, dict) else None
+        details = dict(raw_details) if isinstance(raw_details, dict) else None
         if details is None and code == "runs_not_comparable":
             comparable = body.get("comparable_context")
             details = {"comparable_context": comparable} if isinstance(comparable, dict) else None
-        if details is None:
-            additional = {
-                key: value for key, value in body.items() if key not in {"error", "message"}
-            }
-            details = additional or None
+        additional = {
+            key: value
+            for key, value in body.items()
+            if key not in {"error", "code", "message", "details"}
+        }
+        if additional:
+            details = {**additional, **(details or {})}
         return AgentGymAPIError(response.status_code, code, message, details)
     text = response.text.strip()
     return AgentGymAPIError(

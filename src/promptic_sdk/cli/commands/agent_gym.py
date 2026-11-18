@@ -26,6 +26,7 @@ from promptic_sdk.agent_gym import (
     VerifierAgent,
     VerifierMetric,
 )
+from promptic_sdk.agent_gym.authoring_models import validate_evaluators
 
 agent_gym_app = typer.Typer(help="Configure Agent Optimization components and revisions.")
 console = Console()
@@ -37,7 +38,7 @@ _VERIFIER_EVIDENCE_FIELDS = (
     (EvidenceKind.EXPECTED_OUTPUT, "expectedOutput"),
     (EvidenceKind.EXECUTION_TRACE, "executionTrace"),
 )
-_COMMON_EVALUATOR_KEYS = {"kind", "name", "description", "weight", "required", "threshold"}
+_COMMON_EVALUATOR_KEYS = {"kind", "id", "name", "description", "weight", "required", "threshold"}
 
 
 def _files(value: Any, base: Path) -> Any:
@@ -142,6 +143,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             weight=float(configuration.get("weight", 1)),
         )
     kind = value["kind"]
+    evaluator_id = value.get("id")
     name = cast(str | None, value.get("name"))
     description = cast(str | None, value.get("description"))
     weight = float(value.get("weight", 1))
@@ -149,7 +151,13 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
     threshold = cast(float | None, value.get("threshold"))
     if kind == "f1":
         return ClassificationF1(
-            tuple(value.get("fieldPaths", ())), name, description, weight, required, threshold
+            tuple(value.get("fieldPaths", ())),
+            name,
+            description,
+            weight,
+            required,
+            threshold,
+            id=evaluator_id,
         )
     if kind == "field_level_judge":
         if "rubric" in value or "instructions" in value:
@@ -158,7 +166,14 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
                 "judgeInstructions on each judged field"
             )
         return FieldLevelJudge(
-            fields, value.get("model"), name, description, weight, required, threshold
+            fields,
+            value.get("model"),
+            name,
+            description,
+            weight,
+            required,
+            threshold,
+            id=evaluator_id,
         )
     if kind == "verifier_agent":
         allowed = _COMMON_EVALUATOR_KEYS | {
@@ -172,6 +187,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
         if unknown := set(value) - allowed:
             raise ValueError(f"unsupported verifier_agent field(s): {', '.join(sorted(unknown))}")
         return VerifierAgent(
+            id=evaluator_id,
             instructions=value.get("instructions"),
             model=value.get("model"),
             name=name,
@@ -192,6 +208,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
                 f"{', '.join(sorted(unknown))}"
             )
         return ExpectedBehaviorJudge(
+            id=evaluator_id,
             model=value.get("model"),
             metric_bindings=_metric_bindings(value.get("metricBindings")),
             name=name,
@@ -220,6 +237,7 @@ def apply_agent_config(
     """Create and fully configure an Agent component from one JSON file."""
     payload = json.loads(config.read_text())
     evaluators = [_evaluator(item) for item in payload.get("evaluators", [])]
+    validate_evaluators(evaluators)
     with AgentGymClient(ai_application_id=payload.get("aiApplicationId")) as client:
         agent = client.benchmarks.create(
             name=payload["name"],

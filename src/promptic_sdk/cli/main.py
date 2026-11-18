@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+from enum import StrEnum
 
 import typer
 from rich.console import Console
@@ -27,6 +29,28 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+class ErrorFormat(StrEnum):
+    """Supported diagnostic output formats."""
+
+    TEXT = "text"
+    JSON = "json"
+
+
+_error_format = ErrorFormat.TEXT
+
+
+@app.callback()
+def configure_error_output(
+    error_format: ErrorFormat = typer.Option(
+        ErrorFormat.TEXT, "--error-format", help="Error output on stderr: text or JSON."
+    ),
+) -> None:
+    """Select the diagnostic format for coding agents and interactive use."""
+    global _error_format
+    _error_format = error_format
+
+
 app.command("login")(login)
 app.command("logout")(logout)
 app.command("configure")(configure)
@@ -49,6 +73,8 @@ _err_console = Console(stderr=True)
 
 def main() -> None:
     """Run the CLI with clean error handling."""
+    global _error_format
+    _error_format = ErrorFormat.TEXT
     try:
         app()
     except SystemExit:
@@ -56,10 +82,30 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         from promptic_sdk.client import PrompticAPIError
 
-        if isinstance(exc, PrompticAPIError):
-            _err_console.print(f"[red]Error ({exc.status_code}):[/red] {exc.message}")
+        message = getattr(exc, "message", str(exc))
+        if _error_format == ErrorFormat.JSON:
+            print(
+                json.dumps(
+                    {
+                        "error": getattr(
+                            exc,
+                            "code",
+                            "invalid_configuration"
+                            if isinstance(exc, ValueError)
+                            else "request_failed",
+                        ),
+                        "message": message,
+                        "status_code": getattr(exc, "status_code", None),
+                        "details": getattr(exc, "details", None),
+                    }
+                ),
+                file=sys.stderr,
+            )
         else:
-            _err_console.print(f"[red]Error:[/red] {exc}")
+            prefix = f"Error ({exc.status_code})" if isinstance(exc, PrompticAPIError) else "Error"
+            _err_console.print(
+                f"{prefix}: {message}", style="red", markup=False, highlight=False, soft_wrap=True
+            )
         sys.exit(1)
 
 

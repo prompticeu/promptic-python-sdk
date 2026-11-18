@@ -6,7 +6,7 @@ import json
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, TypedDict, cast
 
 import typer
 from rich.console import Console
@@ -14,6 +14,7 @@ from rich.table import Table
 
 from promptic_sdk.cli import get_client
 from promptic_sdk.models import (
+    OptimizationBrief,
     PromptExperimentTaskType,
     ToolSelectionTestCase,
     ToolSelectionTool,
@@ -45,6 +46,22 @@ def _load_json_object(path: Path, *, option_name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise typer.BadParameter(f"{option_name} must contain a JSON object")
     return value
+
+
+class _GuidanceOptions(TypedDict, total=False):
+    """Optional SDK keyword arguments for CLI guidance."""
+
+    optimization_guidance: OptimizationBrief
+
+
+def _guidance_options(path: Path | None) -> _GuidanceOptions:
+    if path is None:
+        return {}
+    return {
+        "optimization_guidance": cast(
+            OptimizationBrief, _load_json_object(path, option_name="--guidance")
+        )
+    }
 
 
 def _validate_tool_selection_tools(
@@ -96,7 +113,13 @@ def list_experiments(
 
     for e in items:
         st = e["experimentStatus"]
-        st_style = {"completed": "green", "failed": "red", "running": "yellow"}.get(st, "dim")
+        st_style = {
+            "completed": "green",
+            "failed": "red",
+            "running": "yellow",
+            "canceling": "yellow",
+            "canceled": "cyan",
+        }.get(st, "dim")
         table.add_row(
             e["id"],
             e["name"] or "-",
@@ -156,6 +179,16 @@ def create_experiment(
         ),
     ] = None,
     start: bool = typer.Option(False, "--start", help="Start the experiment after creating it."),
+    guidance_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--guidance",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file with optimization rules.",
+        ),
+    ] = None,
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a new experiment.
@@ -208,6 +241,7 @@ def create_experiment(
             optimizer=optimizer,
             hyperparameters=hyperparameters,
             initial_prediction_model_schema=output_schema,
+            **_guidance_options(guidance_file),
         )
         if start:
             client.start_experiment(result["id"])
@@ -268,6 +302,16 @@ def create_tool_selection_experiment(
     name: Annotated[str | None, typer.Option(help="Experiment name.")] = None,
     description: Annotated[str | None, typer.Option(help="Experiment description.")] = None,
     start: bool = typer.Option(False, "--start", help="Start the experiment after creating it."),
+    guidance_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--guidance",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file with optimization rules.",
+        ),
+    ] = None,
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a complete tool-selection optimization experiment."""
@@ -291,6 +335,7 @@ def create_tool_selection_experiment(
             tool_source=cast("ToolSource", tool_source),
             system_prompt=system_prompt,
             optimize_system_prompt=optimize_system_prompt,
+            **_guidance_options(guidance_file),
             epochs=epochs,
             train_split_ratio=train_split_ratio,
             name=name,
@@ -324,7 +369,13 @@ def get_experiment(
         return
 
     st = result["experimentStatus"]
-    st_style = {"completed": "green", "failed": "red", "running": "yellow"}.get(st, "dim")
+    st_style = {
+        "completed": "green",
+        "failed": "red",
+        "running": "yellow",
+        "canceling": "yellow",
+        "canceled": "cyan",
+    }.get(st, "dim")
 
     console.print(f"\n[bold]Experiment:[/bold] {result['name'] or '-'}")
     console.print(f"  ID:       {result['id']}")
@@ -361,10 +412,22 @@ def update_experiment(
     target_model: Annotated[
         str | None, typer.Option("--target-model", "-m", help="New target model.")
     ] = None,
+    guidance_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--guidance",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON file with optimization rules.",
+        ),
+    ] = None,
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Update a pending experiment."""
-    updates: dict[str, str] = {}
+    updates: dict[str, Any] = {}
+    if guidance_file is not None:
+        updates["optimizationGuidance"] = _load_json_object(guidance_file, option_name="--guidance")
     if name is not None:
         updates["name"] = name
     if initial_prompt is not None:
@@ -417,6 +480,36 @@ def start_experiment(
         return
 
     console.print(f"[green]Experiment started.[/green] Status: {result['status']}")
+
+
+@experiments_app.command("cancel")
+def cancel_experiment(
+    experiment_id: str = typer.Argument(help="Experiment ID."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+    output_json: bool = typer.Option(
+        False, "--json", help="Output the cancellation response as JSON."
+    ),
+) -> None:
+    """Request cancellation; running work stops at a safe boundary, not immediately."""
+    if not yes:
+        typer.confirm(f"Request cancellation of experiment {experiment_id}?", abort=True)
+
+    with get_client() as client:
+        result = client.cancel_experiment(experiment_id)
+
+    if output_json:
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return
+
+    if result["status"] == "canceled":
+        console.print("[cyan]Experiment canceled.[/cyan]")
+    else:
+        console.print(
+            "[yellow]Cancellation requested.[/yellow] Status: canceling. "
+            "In-flight work may still finish and incur usage charges."
+        )
+        console.print(f"Check status: promptic experiments get {experiment_id}")
 
 
 def _print_duplicated_experiment(result: Mapping[str, Any], *, source_id: str, kind: str) -> None:

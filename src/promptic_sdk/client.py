@@ -31,10 +31,12 @@ from promptic_sdk.models import (
     Evaluator,
     EvaluatorList,
     Experiment,
+    ExperimentCancellation,
     ExperimentList,
     ExperimentStarted,
     IterationList,
     IterationWithScores,
+    OptimizationBrief,
     PromptExperimentTaskType,
     ToolSelectionTestCase,
     ToolSelectionTool,
@@ -120,6 +122,7 @@ def _tool_selection_body(
     train_split_ratio: float | None,
     name: str | None,
     description: str | None,
+    optimization_guidance: OptimizationBrief | None = None,
 ) -> dict[str, Any]:
     """Build the request body shared by the sync and async clients."""
     body: dict[str, Any] = {
@@ -129,6 +132,8 @@ def _tool_selection_body(
         "toolSource": tool_source,
         "optimizeSystemPrompt": optimize_system_prompt,
     }
+    if optimization_guidance is not None:
+        body["optimizationGuidance"] = optimization_guidance
     if target_model is not None:
         body["targetModel"] = target_model
     if system_prompt is not None:
@@ -370,6 +375,19 @@ class PrompticClient:
         """Get an AI component by ID."""
         return self._get(f"/components/{component_id}")
 
+    def update_component_rules(
+        self, component_id: str, brief: OptimizationBrief, *, expected_version: int
+    ) -> Component:
+        """Replace shared rules; use the component's current version (zero if unset).
+
+        A stale version returns HTTP 409. Fetch the component and reconcile edits
+        before retrying. Pass an empty brief to clear shared rules.
+        """
+        return self._patch(
+            f"/components/{component_id}",
+            json={"optimizationRules": {"version": expected_version, "brief": brief}},
+        )
+
     def delete_component(self, component_id: str) -> None:
         """Delete an AI component."""
         self._delete(f"/components/{component_id}")
@@ -405,9 +423,10 @@ class PrompticClient:
         optimizer: str = "prompticV2",
         hyperparameters: dict[str, Any] | None = None,
         initial_prediction_model_schema: dict[str, Any] | None = None,
+        optimization_guidance: OptimizationBrief | None = None,
         input_variables: list[dict[str, str]] | None = None,
     ) -> Experiment:
-        """Create a new experiment."""
+        """Create an experiment with optional optimizer-only rules."""
         body: dict[str, Any] = {
             "aiComponentId": ai_component_id,
             "targetModel": target_model,
@@ -415,6 +434,8 @@ class PrompticClient:
             "provider": provider,
             "optimizer": optimizer,
         }
+        if optimization_guidance is not None:
+            body["optimizationGuidance"] = optimization_guidance
         if initial_prompt is not None:
             body["initialPrompt"] = initial_prompt
         if name is not None:
@@ -439,6 +460,7 @@ class PrompticClient:
         tool_source: ToolSource = "manual",
         system_prompt: str | None = None,
         optimize_system_prompt: bool = False,
+        optimization_guidance: OptimizationBrief | None = None,
         epochs: int | None = None,
         train_split_ratio: float | None = None,
         name: str | None = None,
@@ -472,6 +494,7 @@ class PrompticClient:
             train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
                 Omit to train and score on all test cases.
             name: Optional experiment name.
+            optimization_guidance: Optimization rules for this experiment.
             description: Optional experiment description.
 
         Returns:
@@ -485,6 +508,7 @@ class PrompticClient:
             tool_source=tool_source,
             system_prompt=system_prompt,
             optimize_system_prompt=optimize_system_prompt,
+            optimization_guidance=optimization_guidance,
             epochs=epochs,
             train_split_ratio=train_split_ratio,
             name=name,
@@ -496,18 +520,45 @@ class PrompticClient:
         """Get an experiment by ID."""
         return self._get(f"/experiments/{experiment_id}")
 
-    def update_experiment(self, experiment_id: str, **updates: Any) -> Experiment:
-        """Update a pending experiment.
+    def update_experiment(
+        self,
+        experiment_id: str,
+        *,
+        optimization_guidance: OptimizationBrief | None = None,
+        **updates: Any,
+    ) -> Experiment:
+        """Update a pending or failed experiment.
 
         Accepts keyword arguments matching experiment fields:
         name, description, targetModel, provider, taskType, optimizer,
         initialPrompt, hyperparameters, initialPredictionModelSchema.
+        ``optimization_guidance`` replaces this experiment's rules and locks;
+        pass ``{}`` to clear them. Inherited component rules remain server-managed.
         """
+        if optimization_guidance is not None:
+            if "optimizationGuidance" in updates:
+                raise ValueError("Supply optimization_guidance or optimizationGuidance, not both")
+            updates["optimizationGuidance"] = optimization_guidance
         return self._patch(f"/experiments/{experiment_id}", json=updates)
 
     def delete_experiment(self, experiment_id: str) -> None:
         """Delete an experiment."""
         self._delete(f"/experiments/{experiment_id}")
+
+    def cancel_experiment(self, experiment_id: str) -> ExperimentCancellation:
+        """Request cancellation without waiting for the worker to stop.
+
+        Ownerless pending/scheduled runs return ``canceled`` immediately.
+        Running runs return ``canceling`` while in-flight work drains; poll
+        ``get_experiment`` for confirmation. Repeated requests are idempotent.
+        Already-started work may still incur usage charges.
+
+        Raises:
+            PrompticAPIError: ``409`` for a non-cancelable state, ``404`` when
+                not found or outside the current AI Application, or ``401``
+                when unauthenticated.
+        """
+        return self._post(f"/experiments/{experiment_id}/cancel")
 
     def start_experiment(self, experiment_id: str) -> ExperimentStarted:
         """Start a pending experiment (enqueue for training).
@@ -890,6 +941,19 @@ class AsyncPrompticClient:
         """Get an AI component by ID."""
         return await self._get(f"/components/{component_id}")
 
+    async def update_component_rules(
+        self, component_id: str, brief: OptimizationBrief, *, expected_version: int
+    ) -> Component:
+        """Replace shared rules; use the component's current version (zero if unset).
+
+        A stale version returns HTTP 409. Fetch the component and reconcile edits
+        before retrying. Pass an empty brief to clear shared rules.
+        """
+        return await self._patch(
+            f"/components/{component_id}",
+            json={"optimizationRules": {"version": expected_version, "brief": brief}},
+        )
+
     async def delete_component(self, component_id: str) -> None:
         """Delete an AI component."""
         await self._delete(f"/components/{component_id}")
@@ -925,9 +989,10 @@ class AsyncPrompticClient:
         optimizer: str = "prompticV2",
         hyperparameters: dict[str, Any] | None = None,
         initial_prediction_model_schema: dict[str, Any] | None = None,
+        optimization_guidance: OptimizationBrief | None = None,
         input_variables: list[dict[str, str]] | None = None,
     ) -> Experiment:
-        """Create a new experiment."""
+        """Create an experiment with optional optimizer-only rules."""
         body: dict[str, Any] = {
             "aiComponentId": ai_component_id,
             "targetModel": target_model,
@@ -935,6 +1000,8 @@ class AsyncPrompticClient:
             "provider": provider,
             "optimizer": optimizer,
         }
+        if optimization_guidance is not None:
+            body["optimizationGuidance"] = optimization_guidance
         if initial_prompt is not None:
             body["initialPrompt"] = initial_prompt
         if name is not None:
@@ -959,6 +1026,7 @@ class AsyncPrompticClient:
         tool_source: ToolSource = "manual",
         system_prompt: str | None = None,
         optimize_system_prompt: bool = False,
+        optimization_guidance: OptimizationBrief | None = None,
         epochs: int | None = None,
         train_split_ratio: float | None = None,
         name: str | None = None,
@@ -992,6 +1060,7 @@ class AsyncPrompticClient:
             train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
                 Omit to train and score on all test cases.
             name: Optional experiment name.
+            optimization_guidance: Optimization rules for this experiment.
             description: Optional experiment description.
 
         Returns:
@@ -1005,6 +1074,7 @@ class AsyncPrompticClient:
             tool_source=tool_source,
             system_prompt=system_prompt,
             optimize_system_prompt=optimize_system_prompt,
+            optimization_guidance=optimization_guidance,
             epochs=epochs,
             train_split_ratio=train_split_ratio,
             name=name,
@@ -1016,13 +1086,38 @@ class AsyncPrompticClient:
         """Get an experiment by ID."""
         return await self._get(f"/experiments/{experiment_id}")
 
-    async def update_experiment(self, experiment_id: str, **updates: Any) -> Experiment:
-        """Update a pending experiment."""
+    async def update_experiment(
+        self,
+        experiment_id: str,
+        *,
+        optimization_guidance: OptimizationBrief | None = None,
+        **updates: Any,
+    ) -> Experiment:
+        """Update a pending or failed experiment."""
+        if optimization_guidance is not None:
+            if "optimizationGuidance" in updates:
+                raise ValueError("Supply optimization_guidance or optimizationGuidance, not both")
+            updates["optimizationGuidance"] = optimization_guidance
         return await self._patch(f"/experiments/{experiment_id}", json=updates)
 
     async def delete_experiment(self, experiment_id: str) -> None:
         """Delete an experiment."""
         await self._delete(f"/experiments/{experiment_id}")
+
+    async def cancel_experiment(self, experiment_id: str) -> ExperimentCancellation:
+        """Request cancellation without waiting for the worker to stop.
+
+        Returns ``canceled`` immediately for ownerless pending/scheduled runs,
+        or ``canceling`` while a running worker drains in-flight work. Poll
+        ``get_experiment`` for confirmation. Repeated requests are idempotent;
+        already-started work may still incur usage charges.
+
+        Raises:
+            PrompticAPIError: ``409`` for a non-cancelable state, ``404`` when
+                not found or outside the current AI Application, or ``401``
+                when unauthenticated.
+        """
+        return await self._post(f"/experiments/{experiment_id}/cancel")
 
     async def start_experiment(self, experiment_id: str) -> ExperimentStarted:
         """Start a pending experiment (enqueue for training).

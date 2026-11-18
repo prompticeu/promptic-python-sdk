@@ -3,11 +3,13 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import typer
 from click import unstyle
 from typer.testing import CliRunner
 
+from promptic_sdk import AgentGymClient
 from promptic_sdk.cli.commands.agent_gym import _evaluator
 from promptic_sdk.cli.commands.experiments import _load_json_array
 from promptic_sdk.cli.config import CliConfig
@@ -397,6 +399,86 @@ class TestDatasetCommands:
 
 
 class TestAgentGymCommands:
+    @pytest.mark.parametrize("with_ids", [True, False])
+    def test_apply_sends_multiple_independent_judges(self, tmp_path, with_ids):
+        """Run CLI conversion and SDK serialization against a mocked HTTP endpoint."""
+        judges = [
+            {
+                "kind": "field_level_judge",
+                **({"id": f"judge-{index}"} if with_ids else {}),
+                "name": f"Judge {index}",
+                "model": f"model-{index}",
+                "weight": index + 1,
+                "fields": {"answer": {"method": "judge", "judgeInstructions": f"Rule {index}."}},
+            }
+            for index in range(5)
+        ]
+        config = tmp_path / "agent.json"
+        config.write_text(
+            json.dumps({"name": "QA", "goal": "Answer questions", "evaluators": judges})
+        )
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(201, json={"id": "benchmark-id"})
+
+        client = AgentGymClient(api_key="ptc_test")
+        client._transport.api.close()
+        client._transport.api = httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://promptic.test/api/v1"
+        )
+        with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
+            result = runner.invoke(app, ["agent-gym", "apply", str(config)])
+
+        assert result.exit_code == 0, result.output
+        assert len(requests) == 1
+        assert requests[0].method == "POST"
+        assert requests[0].url.path == "/api/v1/benchmarks"
+        assert json.loads(requests[0].content)["evaluators"] == [
+            {
+                "kind": "field_level_judge",
+                **({"id": f"judge-{index}"} if with_ids else {}),
+                "name": f"Judge {index}",
+                "model": f"model-{index}",
+                "weight": index + 1,
+                "required": False,
+                "fields": {
+                    "answer": {
+                        "include": True,
+                        "method": "judge",
+                        "judge_instructions": f"Rule {index}.",
+                        "weight": 1.0,
+                    }
+                },
+            }
+            for index in range(5)
+        ]
+
+    @pytest.mark.parametrize("with_id", [True, False])
+    @pytest.mark.parametrize(
+        "configuration",
+        [
+            {"kind": "f1", "fieldPaths": ["label"]},
+            {"kind": "field_level_judge", "fields": {"answer": "exact"}},
+            {"kind": "expected_behavior_judge"},
+            {
+                "kind": "verifier_agent",
+                "instructions": "Check the answer.",
+                "metrics": [
+                    {"key": "quality", "name": "Quality", "instructions": "Check quality."}
+                ],
+            },
+        ],
+    )
+    def test_evaluator_ids_round_trip_for_all_kinds(self, configuration, with_id):
+        value = {**configuration, **({"id": "stable-id"} if with_id else {})}
+        request = _evaluator(value).as_request()
+        if with_id:
+            assert request["id"] == "stable-id"
+        else:
+            assert "id" not in request
+
     def test_apply_round_trips_finalized_verifier_contract(self, tmp_path):
         config = tmp_path / "agent.json"
         config.write_text(
@@ -1005,3 +1087,67 @@ class TestIterationsCommands:
         assert "Search [indexed] invoices and preserve broken[/] markup." in result.stdout
         assert "Selection System Prompt" in result.stdout
         assert "Use [tools] only when needed; never parse broken[/] markup." in result.stdout
+
+
+@pytest.mark.parametrize("command", ["create", "update", "create-tool-selection"])
+def test_experiment_guidance_file(command, tmp_path):
+    guidance = {"rules": ["Focus on **X/Y** confusion."]}
+    path = tmp_path / "guidance.json"
+    path.write_text(json.dumps(guidance))
+    flags = ["experiments", command]
+    method = {
+        "create": "create_experiment",
+        "update": "update_experiment",
+        "create-tool-selection": "create_tool_selection_experiment",
+    }[command]
+    if command == "update":
+        flags += ["experiment"]
+    else:
+        flags += ["--component-id", "component", "--target-model", "model"]
+        if command == "create":
+            flags += ["--task-type", "classification", "--initial-prompt", "Classify {input}"]
+        else:
+            tools = tmp_path / "tools.json"
+            tools.write_text(json.dumps([{"name": "search", "description": "Find"}]))
+            cases = tmp_path / "cases.json"
+            cases.write_text(json.dumps([{"query": "Hi", "expected_tool": "search"}]))
+            flags += ["--tools", str(tools), "--test-cases", str(cases)]
+    with _mock_config(), _mock_client("experiments", method, {"id": "exp"}) as patched:
+        result = runner.invoke(app, flags + ["--guidance", str(path), "--json"])
+    assert result.exit_code == 0, result.output
+    kwargs = getattr(patched.return_value, method).call_args.kwargs
+    assert kwargs.get("optimization_guidance", kwargs.get("optimizationGuidance")) == guidance
+
+
+def test_component_rules_file_and_version(tmp_path):
+    path = tmp_path / "rules.json"
+    path.write_text('{"rules":["Keep labels unchanged."]}')
+    with _mock_config(), _mock_client("components", "update_component_rules", {}) as patched:
+        result = runner.invoke(
+            app,
+            [
+                "components",
+                "set-rules",
+                "component",
+                "--guidance",
+                str(path),
+                "--version",
+                "2",
+                "--json",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    patched.return_value.update_component_rules.assert_called_once_with(
+        "component", {"rules": ["Keep labels unchanged."]}, expected_version=2
+    )
+
+
+def test_guidance_cli_rejects_arrays_before_request(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("[]")
+    with _mock_config(), _mock_client("experiments", "update_experiment", {}) as patched:
+        result = runner.invoke(
+            app, ["experiments", "update", "experiment", "--guidance", str(path), "--json"]
+        )
+    assert result.exit_code != 0
+    patched.return_value.update_experiment.assert_not_called()
