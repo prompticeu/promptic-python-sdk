@@ -18,27 +18,19 @@
   },
   "evaluators": [
     {
-      "kind": "field_level_judge",
+      "kind": "ai_judge",
       "id": "answer-quality",
       "name": "Answer quality",
       "weight": 2,
-      "fields": {
-        "answer": {
-          "method": "judge",
-          "judgeInstructions": "Check that the answer is accurate and addresses the question."
-        },
-        "pages": {"method": "array_exact", "include": false}
-      }
+      "field": "answer",
+      "instructions": "Check that the answer is accurate and addresses the question."
     },
     {
-      "kind": "field_level_judge",
+      "kind": "exact_match",
       "id": "supporting-pages",
       "name": "Supporting pages",
       "weight": 1,
-      "fields": {
-        "answer": {"method": "exact", "include": false},
-        "pages": {"method": "array_exact"}
-      }
+      "field": "pages"
     }
   ]
 }

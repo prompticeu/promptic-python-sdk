@@ -24,7 +24,13 @@ EvaluatorType = Literal[
     "similarity",
     "structuredOutput",
     "toolSelection",
+    "exactMatch",
+    "containsText",
+    "semanticSimilarity",
+    "aiJudge",
+    "codeFunction",
 ]
+TargetedEvaluatorType = Literal["exactMatch", "containsText", "semanticSimilarity", "aiJudge"]
 SplitType = Literal["train", "eval"]
 TraceStatus = Literal["ok", "error"]
 PromptFormat = Literal["single", "multi_message"]
@@ -134,7 +140,7 @@ class ComponentCreated(TypedDict):
 
 
 class Hyperparameters(TypedDict, total=False):
-    """Experiment hyperparameters (all optional)."""
+    """Experiment hyperparameters; epochs=0 evaluates without optimizing."""
 
     epochs: int
     trainSplitRatio: float
@@ -251,7 +257,65 @@ ToolSelectionTestCase: TypeAlias = _SnakeCaseToolSelectionTestCase | _CamelCaseT
 # ── Evaluators ───────────────────────────────────────────────────────
 
 
-class Evaluator(TypedDict):
+class _CodeFunctionConfigOptional(TypedDict, total=False):
+    """Optional code evaluator configuration keys."""
+
+    function_name: Literal["score"]
+
+
+class CodeFunctionConfig(_CodeFunctionConfigOptional):
+    """Prompt-experiment function source executed in the platform sandbox.
+
+    Define ``score(row)`` and return a finite number or ``{score, reason?}``.
+    Source is limited to 64 KiB of UTF-8. No imports, network, filesystem,
+    subprocesses, or provider credentials are available. This is not an
+    Agent Gym evaluator kind. Version-3 rows contain only ``id``,
+    ``input_variables`` (original named values), ``expected``, and ``predicted``.
+    Python uses dictionary keys, not attribute access.
+    Execution errors fail evaluation instead of becoming low quality scores.
+    """
+
+    language: Literal["python", "javascript"]
+    source: str
+
+
+class _CodeFunctionTestRowOptional(TypedDict, total=False):
+    """Optional fields in an explicit function-test sample."""
+
+    id: str | int
+
+
+class CodeFunctionTestRow(_CodeFunctionTestRowOptional):
+    """Explicit named inputs, reference output, and sample model output."""
+
+    input_variables: dict[str, Any]
+    expected: str
+    predicted: str
+
+
+class TargetedEvaluatorConfig(TypedDict, total=False):
+    """``config`` of an ``exactMatch``, ``containsText``, ``semanticSimilarity`` or ``aiJudge``.
+
+    ``field`` is a dotted output path such as ``answer`` or ``user.name``; omit it to
+    score the whole response. ``instructions`` is optional AI Judge guidance added to
+    the built-in equivalence rubric and is rejected for the other types. When
+    ``schema_definition`` holds the output schema, the server also checks that the
+    field exists and suits the method; without it only the path syntax is checked.
+    """
+
+    field: str | None
+    instructions: str | None
+    schema_definition: dict[str, Any] | None
+
+
+class _EvaluatorOptional(TypedDict, total=False):
+    """Evaluator keys that older API deployments omit."""
+
+    # Disabled evaluators keep their configuration but are not run or scored.
+    enabled: bool
+
+
+class Evaluator(_EvaluatorOptional):
     """Evaluator configuration record."""
 
     id: str
@@ -347,6 +411,43 @@ class IterationList(TypedDict):
     """Paginated list of iterations."""
 
     data: list[Iteration]
+
+
+class ExperimentCaseResult(TypedDict, total=False):
+    """One case's input, expected output, prediction, usage diagnostics and scores."""
+
+    id: str
+    idx: int | None
+    variables: dict[str, str]
+    expected: str
+    prediction: str | None
+    predictionAdditional: dict[str, Any] | None
+    latencyMs: int | None
+    score: float | None
+    evaluatorScores: list[dict[str, Any]]
+    split: Literal["train", "eval"]
+
+
+class ExperimentEvaluatorScore(TypedDict):
+    """Aggregate evaluator score returned with a case-result page."""
+
+    score: float | None
+    rawScore: float | None
+    evaluatorId: str
+    evaluatorName: str
+    evaluatorDescription: str | None
+    evaluatorType: EvaluatorType
+
+
+class ExperimentCasePage(TypedDict):
+    """A bounded page of experiment case results and full-dataset counts."""
+
+    data: list[ExperimentCaseResult]
+    iterationScores: list[ExperimentEvaluatorScore]
+    nextCursor: str | None
+    total: int
+    totalDatasetCaseCount: int
+    trainDatasetCaseCount: int
 
 
 # ── Deployments ──────────────────────────────────────────────────────

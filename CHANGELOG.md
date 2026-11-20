@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.8.0 (2026-11-20)
+
+## Features
+
+- Added support for Python and JavaScript code functions in evaluators.
+
+
+## v1.7.0 (2026-11-20)
+
+## Features
+
+- Deprecated `FieldLevelJudge`; use the recommended evaluator alternatives instead.
+
+
+## v1.6.0 (2026-11-19)
+
+## Features
+
+- Added support for targeted evaluators.
+- Added an enabled flag for evaluators.
+
+
+## v1.5.0 (2026-11-19)
+
+## Features
+
+- Added evaluation-only prompt workflows for experiments.
+
+
 ## v1.4.0 (2026-11-04)
 
 ## Features

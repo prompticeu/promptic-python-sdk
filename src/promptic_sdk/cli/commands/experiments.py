@@ -6,7 +6,7 @@ import json
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 import typer
 from rich.console import Console
@@ -16,6 +16,7 @@ from promptic_sdk.cli import get_client
 from promptic_sdk.models import (
     OptimizationBrief,
     PromptExperimentTaskType,
+    PromptMessage,
     ToolSelectionTestCase,
     ToolSelectionTool,
     ToolSource,
@@ -168,6 +169,19 @@ def create_experiment(
             help="JSON file containing experiment hyperparameters.",
         ),
     ] = None,
+    evaluation_only: bool = typer.Option(
+        False, "--evaluate-only", help="Evaluate the supplied prompt once without optimizing it."
+    ),
+    messages_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--messages",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="JSON array of ordered role/content messages for a multi-message prompt.",
+        ),
+    ] = None,
     output_schema_file: Annotated[
         Path | None,
         typer.Option(
@@ -211,7 +225,9 @@ def create_experiment(
             "--task-type must be classification, textGeneration, or structuredOutput; "
             "tool selection requires create_tool_selection_experiment()"
         )
-    if not initial_prompt:
+    if initial_prompt is not None and messages_file is not None:
+        raise typer.BadParameter("Use --initial-prompt or --messages, not both")
+    if not initial_prompt and messages_file is None:
         initial_prompt = typer.prompt("Initial prompt", default="")
         if not initial_prompt:
             initial_prompt = None
@@ -229,6 +245,19 @@ def create_experiment(
     if task_type == "structuredOutput" and output_schema is None:
         raise typer.BadParameter("--output-schema is required for structuredOutput experiments")
 
+    extras: dict[str, Any] = {}
+    if evaluation_only:
+        if hyperparameters is not None and hyperparameters.get("epochs", 0) != 0:
+            raise typer.BadParameter(
+                "--evaluate-only conflicts with nonzero epochs in --hyperparameters"
+            )
+        extras["evaluation_only"] = True
+    if messages_file is not None:
+        extras["prompt_format"] = "multi_message"
+        extras["initial_prompt_messages"] = cast(
+            "list[PromptMessage]", _load_json_array(messages_file, option_name="--messages")
+        )
+
     with get_client() as client:
         result = client.create_experiment(
             ai_component_id=component_id,
@@ -242,6 +271,7 @@ def create_experiment(
             hyperparameters=hyperparameters,
             initial_prediction_model_schema=output_schema,
             **_guidance_options(guidance_file),
+            **extras,
         )
         if start:
             client.start_experiment(result["id"])
@@ -294,7 +324,12 @@ def create_tool_selection_experiment(
         "--optimize-system-prompt",
         help="Optimize the system prompt together with tool descriptions.",
     ),
-    epochs: Annotated[int | None, typer.Option(min=1, max=5)] = None,
+    epochs: Annotated[
+        int | None, typer.Option(min=0, max=5, help="Optimization rounds; 0 evaluates only.")
+    ] = None,
+    evaluation_only: bool = typer.Option(
+        False, "--evaluate-only", help="Evaluate supplied tools without rewriting them."
+    ),
     train_split_ratio: Annotated[
         float | None,
         typer.Option(min=0.5, max=0.9, help="Held-out evaluation split."),
@@ -315,6 +350,10 @@ def create_tool_selection_experiment(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Create a complete tool-selection optimization experiment."""
+    if evaluation_only:
+        if epochs not in (None, 0):
+            raise typer.BadParameter("--evaluate-only conflicts with nonzero --epochs")
+        epochs = 0
     if tool_source not in {"manual", "mcp"}:
         raise typer.BadParameter("--tool-source must be manual or mcp")
 
@@ -422,6 +461,9 @@ def update_experiment(
             help="JSON file with optimization rules.",
         ),
     ] = None,
+    epochs: Annotated[
+        int | None, typer.Option(min=0, max=10, help="Optimization rounds; 0 evaluates only.")
+    ] = None,
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Update a pending experiment."""
@@ -431,15 +473,23 @@ def update_experiment(
     if name is not None:
         updates["name"] = name
     if initial_prompt is not None:
-        updates["initialPrompt"] = initial_prompt
+        updates["promptFormat"] = "single"
+        updates["initialPromptMessages"] = [{"role": "user", "content": initial_prompt}]
     if target_model is not None:
         updates["targetModel"] = target_model
 
-    if not updates:
+    if not updates and epochs is None:
         err_console.print("No updates specified.", style="yellow")
         raise typer.Exit(1)
 
     with get_client() as client:
+        if epochs is not None:
+            current = client.get_experiment(experiment_id)
+            updates["hyperparameters"] = {
+                "numFewShots": 8,
+                **current.get("hyperparameters", {}),
+                "epochs": epochs,
+            }
         result = client.update_experiment(experiment_id, **updates)
 
     if output_json:
@@ -470,7 +520,7 @@ def start_experiment(
     experiment_id: str = typer.Argument(help="Experiment ID."),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    """Start a pending experiment (enqueue for training)."""
+    """Start a pending experiment in its configured evaluation or optimization mode."""
     with get_client() as client:
         result = client.start_experiment(experiment_id)
 
@@ -537,6 +587,9 @@ def duplicate_experiment(
             help="Override the initial prompt of the new experiment.",
         ),
     ] = None,
+    evaluation_only: bool = typer.Option(
+        False, "--evaluate-only", help="Configure the new candidate to evaluate without optimizing."
+    ),
     start: bool = typer.Option(
         False, "--start", help="Immediately start the new experiment after creating it."
     ),
@@ -551,6 +604,12 @@ def duplicate_experiment(
     """
     with get_client() as client:
         result = client.duplicate_experiment(experiment_id, initial_prompt_override=initial_prompt)
+        if evaluation_only:
+            hyperparameters = {"numFewShots": 8, **result.get("hyperparameters", {}), "epochs": 0}
+            result = {
+                **result,
+                **client.update_experiment(result["id"], hyperparameters=hyperparameters),
+            }
         if start:
             client.start_experiment(result["id"])
 
@@ -592,3 +651,49 @@ def continue_experiment(
     _print_duplicated_experiment(result, source_id=experiment_id, kind="continued")
     if start:
         console.print("[green]New experiment started.[/green]")
+
+
+@experiments_app.command("cases")
+def list_experiment_cases(
+    experiment_id: str = typer.Argument(help="Experiment ID."),
+    iteration_id: int = typer.Option(
+        ..., "--iteration-id", min=1, help="Persisted iteration ID, not the iteration number."
+    ),
+    split: str = typer.Option("all", help="Case split: all, train or eval."),
+    limit: Annotated[int, typer.Option(min=1, max=100)] = 25,
+    cursor: str | None = typer.Option(None, help="Cursor from the previous page."),
+    sort: str | None = typer.Option(None, help="Server-side sort, e.g. score or latencyMs."),
+    descending: bool = typer.Option(False, "--descending", help="Sort highest values first."),
+    output_json: bool = typer.Option(False, "--json", help="Output the complete page as JSON."),
+) -> None:
+    """Read a page of predictions and per-evaluator case results."""
+    if split not in {"all", "train", "eval"}:
+        raise typer.BadParameter("--split must be all, train or eval")
+    with get_client() as client:
+        result = client.list_experiment_cases(
+            experiment_id,
+            iteration_id=iteration_id,
+            split=cast(Literal["all", "train", "eval"], split),
+            limit=limit,
+            cursor=cursor,
+            sort=sort,
+            descending=descending,
+        )
+    if output_json:
+        json.dump(result, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+    table = Table(title=f"Case results ({len(result['data'])} / {result['total']})")
+    for name in ["ID", "Expected", "Prediction", "Score"]:
+        table.add_column(name)
+    for row in result["data"]:
+        score = row.get("score")
+        table.add_row(
+            str(row["id"]),
+            str(row.get("expected", "")),
+            str(row.get("prediction", "")),
+            f"{score:.3f}" if score is not None else "-",
+        )
+    console.print(table)
+    if result.get("nextCursor"):
+        console.print(f"Next cursor: {result['nextCursor']}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -11,6 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TypedDict, cast
 
+from promptic_sdk._evaluator_fields import validate_target_field
 from promptic_sdk.agent_gym._validation import EvaluatorConfigurationError
 
 FieldMethod = Literal[
@@ -174,7 +176,26 @@ EvaluatorKind = Literal[
     "field_level_judge",
     "verifier_agent",
     "expected_behavior_judge",
+    "exact_match",
+    "contains_text",
+    "semantic_similarity",
+    "ai_judge",
 ]
+TARGETED_EVALUATOR_KINDS: frozenset[str] = frozenset(
+    {"exact_match", "contains_text", "semantic_similarity", "ai_judge"}
+)
+"""Kinds that score one output field, or the whole response, with one method."""
+
+MAX_TARGETED_EVALUATORS = 64
+"""Most targeted evaluators one evaluation plan accepts."""
+
+_REPEATABLE_EVALUATOR_KINDS = TARGETED_EVALUATOR_KINDS | {"field_level_judge"}
+
+FIELD_LEVEL_JUDGE_DEPRECATION = (
+    "FieldLevelJudge (field_level_judge, shown as Schema match) is deprecated and can no "
+    "longer be configured. Use one ExactMatch, ContainsText, SemanticSimilarity or AIJudge "
+    "per output field instead. Agents that already use it keep running."
+)
 
 
 class AgentEvaluator(ABC):
@@ -182,6 +203,7 @@ class AgentEvaluator(ABC):
 
     kind: ClassVar[EvaluatorKind]
     id: str | None = None
+    enabled: bool = True
     name: str | None
     description: str | None
     weight: float
@@ -192,6 +214,8 @@ class AgentEvaluator(ABC):
     def _validate_common(self) -> None:
         if self.id is not None and (not isinstance(self.id, str) or not self.id):
             raise ValueError("evaluator id must be a non-empty string when provided")
+        if not isinstance(self.enabled, bool):
+            raise ValueError("evaluator enabled must be a boolean")
         if self.weight <= 0:
             raise ValueError("evaluator weight must be positive")
         if self.threshold is not None and not 0 <= self.threshold <= 1:
@@ -206,6 +230,8 @@ class AgentEvaluator(ABC):
         return {
             "kind": self.kind,
             **({"id": self.id} if self.id is not None else {}),
+            # Omitted when enabled so older deployments receive the same payload as before.
+            **({"enabled": False} if not self.enabled else {}),
             **({"weight": self.weight} if self.supports_evaluator_weight else {}),
             "required": self.required,
             **({"name": self.name} if self.name else {}),
@@ -226,6 +252,7 @@ class ClassificationF1(AgentEvaluator):
     required: bool = False
     threshold: float | None = None
     id: str | None = field(default=None, kw_only=True)
+    enabled: bool = field(default=True, kw_only=True)
     kind: ClassVar[Literal["f1"]] = "f1"
 
     def __post_init__(self) -> None:
@@ -240,7 +267,13 @@ class ClassificationF1(AgentEvaluator):
 
 @dataclass(frozen=True)
 class FieldLevelJudge(AgentEvaluator):
-    """Field-by-field scoring for structured outputs."""
+    """Deprecated field-by-field scoring for structured outputs.
+
+    The platform no longer accepts this evaluator: creating one warns, and sending it
+    raises ``EvaluatorConfigurationError``. Score each field with its own ``ExactMatch``,
+    ``ContainsText``, ``SemanticSimilarity`` or ``AIJudge`` instead. The class remains so
+    existing code keeps importing.
+    """
 
     fields: Mapping[str, FieldScoring | FieldMethod] = field(default_factory=dict)
     model: str | None = None
@@ -250,10 +283,12 @@ class FieldLevelJudge(AgentEvaluator):
     required: bool = False
     threshold: float | None = None
     id: str | None = field(default=None, kw_only=True)
+    enabled: bool = field(default=True, kw_only=True)
     kind: ClassVar[Literal["field_level_judge"]] = "field_level_judge"
 
     def __post_init__(self) -> None:
-        """Validate field-level judge configuration."""
+        """Warn about the deprecation and validate the configuration."""
+        warnings.warn(FIELD_LEVEL_JUDGE_DEPRECATION, DeprecationWarning, stacklevel=3)
         self._validate_common()
 
     def _specific_request(self) -> dict[str, Any]:
@@ -291,6 +326,7 @@ class VerifierAgent(AgentEvaluator):
     metric_bindings: Mapping[str, MetricBinding] = field(default_factory=dict)
     rubric: str | None = field(default=None, kw_only=True, repr=False)
     id: str | None = field(default=None, kw_only=True)
+    enabled: bool = field(default=True, kw_only=True)
     kind: ClassVar[Literal["verifier_agent"]] = "verifier_agent"
     supports_evaluator_weight: ClassVar[bool] = False
 
@@ -376,6 +412,7 @@ class ExpectedBehaviorJudge(AgentEvaluator):
     model: str | None = None
     metric_bindings: Mapping[str, MetricBinding] = field(default_factory=dict)
     id: str | None = field(default=None, kw_only=True)
+    enabled: bool = field(default=True, kw_only=True)
     kind: ClassVar[Literal["expected_behavior_judge"]] = "expected_behavior_judge"
     supports_evaluator_weight: ClassVar[bool] = False
 
@@ -409,6 +446,94 @@ class ExpectedBehaviorJudge(AgentEvaluator):
                 if self.metric_bindings
                 else {}
             ),
+        }
+
+
+@dataclass(frozen=True)
+class _TargetedEvaluator(AgentEvaluator):
+    """Shared configuration of the evaluators that score one field with one method."""
+
+    field: str | None = None
+    name: str | None = None
+    description: str | None = None
+    weight: float = 1.0
+    required: bool = False
+    threshold: float | None = None
+    # ``field`` names the target path in this class body, so use the qualified helper.
+    id: str | None = dataclasses.field(default=None, kw_only=True)
+    enabled: bool = dataclasses.field(default=True, kw_only=True)
+
+    def __post_init__(self) -> None:
+        """Validate the common settings and normalize the target field."""
+        self._validate_common()
+        object.__setattr__(self, "field", validate_target_field(self.field))
+
+    def _specific_request(self) -> dict[str, Any]:
+        return {"field": self.field} if self.field is not None else {}
+
+
+@dataclass(frozen=True)
+class ExactMatch(_TargetedEvaluator):
+    """Score 1 when one output field, or the whole response, equals the expected value.
+
+    Numbers use a small tolerance and lists are compared by their exactly equal items in
+    any order. Without a ``field`` the whole response is compared, ignoring surrounding
+    whitespace. Makes no model calls.
+    """
+
+    kind: ClassVar[Literal["exact_match"]] = "exact_match"
+
+
+@dataclass(frozen=True)
+class ContainsText(_TargetedEvaluator):
+    """Score 1 when the expected text appears in one text field, or the whole response.
+
+    Ignores case and surrounding whitespace. Makes no model calls.
+    """
+
+    kind: ClassVar[Literal["contains_text"]] = "contains_text"
+
+
+@dataclass(frozen=True)
+class SemanticSimilarity(_TargetedEvaluator):
+    """Embedding similarity of one field, or the whole response, to the expected value.
+
+    Shown as "Embedding Similarity" in the dashboard. Fast and cheap, but approximate: a
+    negation or a wrong number in an otherwise identical text still scores high. Use
+    ``AIJudge`` when correctness matters.
+    """
+
+    kind: ClassVar[Literal["semantic_similarity"]] = "semantic_similarity"
+
+
+@dataclass(frozen=True)
+class AIJudge(_TargetedEvaluator):
+    """A model judges whether one field, or the whole response, says the same as expected.
+
+    The judge applies a built-in equivalence rubric; ``instructions`` adds domain rules on
+    top, for example "accept paraphrases, but the amount and currency must match".
+    ``model`` selects a judge-eligible model; the platform default is used when omitted.
+    """
+
+    instructions: str | None = field(default=None, kw_only=True)
+    model: str | None = field(default=None, kw_only=True)
+    kind: ClassVar[Literal["ai_judge"]] = "ai_judge"
+
+    def __post_init__(self) -> None:
+        """Validate the judge guidance and model."""
+        super().__post_init__()
+        if self.instructions is not None and (
+            not isinstance(self.instructions, str) or not self.instructions.strip()
+        ):
+            raise ValueError("AI judge instructions cannot be empty; omit them instead")
+        if self.model is not None and (not isinstance(self.model, str) or not self.model):
+            raise ValueError("AI judge model must be a non-empty string when provided")
+
+    def _specific_request(self) -> dict[str, Any]:
+        return {
+            **super()._specific_request(),
+            **({"instructions": self.instructions} if self.instructions is not None else {}),
+            **({"model": self.model} if self.model else {}),
         }
 
 
@@ -688,11 +813,42 @@ class PublishedBenchmarkRevision:
 
 
 def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
-    """Require unique explicit IDs and one evaluator per kind except field-level judges."""
+    """Check the evaluator collection against the server's uniqueness rules before sending it.
+
+    Explicit IDs are unique across all evaluators. ``f1``, ``verifier_agent`` and
+    ``expected_behavior_judge`` allow one evaluator each, disabled ones included.
+    Targeted evaluators (``ExactMatch``, ``ContainsText``, ``SemanticSimilarity``,
+    ``AIJudge``) are repeatable; they need unique names and are limited to
+    ``MAX_TARGETED_EVALUATORS``. The deprecated ``FieldLevelJudge`` is rejected.
+    """
     seen_ids: dict[str, int] = {}
     seen_kinds: dict[str, int] = {}
+    seen_names: dict[str, int] = {}
     issues: list[dict[str, Any]] = []
+    targeted_count = sum(
+        1 for evaluator in evaluators if evaluator.kind in TARGETED_EVALUATOR_KINDS
+    )
+    if targeted_count > MAX_TARGETED_EVALUATORS:
+        issues.append(
+            {
+                "code": "too_many_targeted_evaluators",
+                "path": ["evaluators"],
+                "message": (
+                    f"At most {MAX_TARGETED_EVALUATORS} targeted evaluators are supported; "
+                    f"got {targeted_count}."
+                ),
+            }
+        )
     for index, evaluator in enumerate(evaluators):
+        if evaluator.kind == "field_level_judge":
+            issues.append(
+                {
+                    "code": "deprecated_evaluator_kind",
+                    "path": ["evaluators", index, "kind"],
+                    "kind": evaluator.kind,
+                    "message": FIELD_LEVEL_JUDGE_DEPRECATION,
+                }
+            )
         if evaluator.id is not None:
             if evaluator.id in seen_ids:
                 first_index = seen_ids[evaluator.id]
@@ -711,7 +867,26 @@ def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
             else:
                 seen_ids[evaluator.id] = index
         kind = evaluator.kind
-        if kind == "field_level_judge":
+        name = evaluator.name.strip() if isinstance(evaluator.name, str) else ""
+        if kind in TARGETED_EVALUATOR_KINDS and name:
+            if name in seen_names:
+                first_index = seen_names[name]
+                issues.append(
+                    {
+                        "code": "duplicate_evaluator_name",
+                        "path": ["evaluators", index, "name"],
+                        "kind": kind,
+                        "firstIndex": first_index,
+                        "message": (
+                            f"Evaluator name '{name}' is used more than once; first configured "
+                            f"at evaluators[{first_index}].name. Give each targeted evaluator "
+                            "a unique name."
+                        ),
+                    }
+                )
+            else:
+                seen_names[name] = index
+        if kind in _REPEATABLE_EVALUATOR_KINDS:
             continue
         if kind not in seen_kinds:
             seen_kinds[kind] = index

@@ -10,6 +10,7 @@ from click import unstyle
 from typer.testing import CliRunner
 
 from promptic_sdk import AgentGymClient
+from promptic_sdk.agent_gym._validation import EvaluatorConfigurationError
 from promptic_sdk.cli.commands.agent_gym import _evaluator
 from promptic_sdk.cli.commands.experiments import _load_json_array
 from promptic_sdk.cli.config import CliConfig
@@ -404,12 +405,13 @@ class TestAgentGymCommands:
         """Run CLI conversion and SDK serialization against a mocked HTTP endpoint."""
         judges = [
             {
-                "kind": "field_level_judge",
+                "kind": "ai_judge",
                 **({"id": f"judge-{index}"} if with_ids else {}),
                 "name": f"Judge {index}",
                 "model": f"model-{index}",
                 "weight": index + 1,
-                "fields": {"answer": {"method": "judge", "judgeInstructions": f"Rule {index}."}},
+                "field": "answer",
+                "instructions": f"Rule {index}.",
             }
             for index in range(5)
         ]
@@ -437,20 +439,14 @@ class TestAgentGymCommands:
         assert requests[0].url.path == "/api/v1/benchmarks"
         assert json.loads(requests[0].content)["evaluators"] == [
             {
-                "kind": "field_level_judge",
+                "kind": "ai_judge",
                 **({"id": f"judge-{index}"} if with_ids else {}),
                 "name": f"Judge {index}",
                 "model": f"model-{index}",
                 "weight": index + 1,
                 "required": False,
-                "fields": {
-                    "answer": {
-                        "include": True,
-                        "method": "judge",
-                        "judge_instructions": f"Rule {index}.",
-                        "weight": 1.0,
-                    }
-                },
+                "field": "answer",
+                "instructions": f"Rule {index}.",
             }
             for index in range(5)
         ]
@@ -551,7 +547,7 @@ class TestAgentGymCommands:
             "budget": {"maxSteps": 200},
         }
 
-    def test_apply_preserves_explicit_field_scoring(self, tmp_path):
+    def test_apply_rejects_deprecated_field_level_judge(self, tmp_path):
         config = tmp_path / "agent.json"
         config.write_text(
             json.dumps(
@@ -586,16 +582,11 @@ class TestAgentGymCommands:
         with patch("promptic_sdk.cli.commands.agent_gym.AgentGymClient", return_value=client):
             result = runner.invoke(app, ["agent-gym", "apply", str(config)])
 
-        assert result.exit_code == 0
-        evaluator = client.benchmarks.create.call_args.kwargs["evaluators"][0]
-        assert evaluator.as_request()["fields"] == {
-            "answer": {
-                "include": True,
-                "method": "judge",
-                "weight": 2.0,
-                "judge_instructions": "Check the evidence.",
-            }
-        }
+        assert result.exit_code != 0
+        assert isinstance(result.exception, EvaluatorConfigurationError)
+        assert result.exception.code == "deprecated_evaluator_kind"
+        assert "AIJudge" in str(result.exception)
+        client.benchmarks.create.assert_not_called()
 
     def test_apply_round_trips_locked_expected_behavior_judge(self, tmp_path):
         config = tmp_path / "agent.json"

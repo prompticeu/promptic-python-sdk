@@ -13,16 +13,20 @@ from rich.console import Console
 from promptic_sdk.agent_gym import (
     AgentEvaluator,
     AgentGymClient,
+    AIJudge,
     BenchmarkCase,
     BenchmarkFile,
     ClassificationF1,
+    ContainsText,
     EvidenceKind,
     EvidencePolicy,
+    ExactMatch,
     ExpectedBehaviorJudge,
     FieldLevelJudge,
     FieldScoring,
     InvestigationBudget,
     MetricBinding,
+    SemanticSimilarity,
     VerifierAgent,
     VerifierMetric,
 )
@@ -38,7 +42,21 @@ _VERIFIER_EVIDENCE_FIELDS = (
     (EvidenceKind.EXPECTED_OUTPUT, "expectedOutput"),
     (EvidenceKind.EXECUTION_TRACE, "executionTrace"),
 )
-_COMMON_EVALUATOR_KEYS = {"kind", "id", "name", "description", "weight", "required", "threshold"}
+_COMMON_EVALUATOR_KEYS = {
+    "kind",
+    "id",
+    "name",
+    "description",
+    "weight",
+    "required",
+    "threshold",
+    "enabled",
+}
+_TARGETED_EVALUATORS: dict[str, type[ExactMatch | ContainsText | SemanticSimilarity]] = {
+    "exact_match": ExactMatch,
+    "contains_text": ContainsText,
+    "semantic_similarity": SemanticSimilarity,
+}
 
 
 def _files(value: Any, base: Path) -> Any:
@@ -149,6 +167,39 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
     weight = float(value.get("weight", 1))
     required = bool(value.get("required", False))
     threshold = cast(float | None, value.get("threshold"))
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("evaluator enabled must be true or false")
+    if kind in _TARGETED_EVALUATORS or kind == "ai_judge":
+        allowed = _COMMON_EVALUATOR_KEYS | {"field"}
+        if kind == "ai_judge":
+            allowed |= {"instructions", "model"}
+        if unknown := set(value) - allowed:
+            raise ValueError(f"unsupported {kind} field(s): {', '.join(sorted(unknown))}")
+        target = cast(str | None, value.get("field"))
+        if kind == "ai_judge":
+            return AIJudge(
+                target,
+                name,
+                description,
+                weight,
+                required,
+                threshold,
+                id=evaluator_id,
+                enabled=enabled,
+                instructions=cast(str | None, value.get("instructions")),
+                model=cast(str | None, value.get("model")),
+            )
+        return _TARGETED_EVALUATORS[kind](
+            target,
+            name,
+            description,
+            weight,
+            required,
+            threshold,
+            id=evaluator_id,
+            enabled=enabled,
+        )
     if kind == "f1":
         return ClassificationF1(
             tuple(value.get("fieldPaths", ())),
@@ -158,6 +209,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             required,
             threshold,
             id=evaluator_id,
+            enabled=enabled,
         )
     if kind == "field_level_judge":
         if "rubric" in value or "instructions" in value:
@@ -174,6 +226,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             required,
             threshold,
             id=evaluator_id,
+            enabled=enabled,
         )
     if kind == "verifier_agent":
         allowed = _COMMON_EVALUATOR_KEYS | {
@@ -188,6 +241,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             raise ValueError(f"unsupported verifier_agent field(s): {', '.join(sorted(unknown))}")
         return VerifierAgent(
             id=evaluator_id,
+            enabled=enabled,
             instructions=value.get("instructions"),
             model=value.get("model"),
             name=name,
@@ -209,6 +263,7 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             )
         return ExpectedBehaviorJudge(
             id=evaluator_id,
+            enabled=enabled,
             model=value.get("model"),
             metric_bindings=_metric_bindings(value.get("metricBindings")),
             name=name,

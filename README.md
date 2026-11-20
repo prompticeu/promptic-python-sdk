@@ -97,6 +97,231 @@ with PrompticClient() as client:
     prompt = client.get_deployed_prompt("comp_...")
 ```
 
+### Evaluate locally authored prompts
+
+For SDK/server releases with evaluation-only support, pass `evaluation_only=True`
+to `create_experiment()`. It creates a pending experiment with `epochs=0`: one
+prediction/evaluation pass and no generated prompt improvements. Configure cases
+and evaluators, then call `start_experiment()` as usual. Applicable model,
+evaluator and platform usage is still charged; the successful optimization fee
+is skipped. An explicit nonzero `hyperparameters["epochs"]` conflicts with this flag.
+
+To evaluate a candidate against an existing setup, clone its cases and evaluators:
+
+```python
+import time
+
+with PrompticClient() as client:
+    candidate = client.duplicate_experiment(
+        reference_experiment_id, initial_prompt_override="Classify: {input}",
+    )
+    client.update_experiment(
+        candidate["id"],
+        hyperparameters={"numFewShots": 8, **candidate["hyperparameters"], "epochs": 0},
+    )
+    client.start_experiment(candidate["id"])
+    deadline = time.monotonic() + 300
+    while True:
+        run = client.get_experiment(candidate["id"])
+        if run["experimentStatus"] in {"completed", "failed", "canceled"}:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Run {candidate['id']} is still running")
+        time.sleep(2)
+    if run["experimentStatus"] != "completed":
+        raise RuntimeError(run.get("errorMessage") or run["experimentStatus"])
+
+    # After completion, iterationNumber is 0; use its persisted id below.
+    iteration = client.get_best_iteration(candidate["id"])
+    cases = client.list_experiment_cases(
+        candidate["id"], iteration_id=iteration["id"], sort="score", limit=25,
+    )
+```
+
+`list_experiment_cases()` returns one page of inputs, expected outputs, predictions,
+per-evaluator scores, diagnostics and latency, plus `nextCursor` and full-dataset
+counts. Follow cursors explicitly for more data; sorting applies across the selected
+split before pagination. Keep the same cases, evaluators and model settings when
+comparing candidates. A zero score is valid. Both sync and async clients support
+this workflow; await async methods.
+A local polling timeout does not cancel remote execution.
+
+For chat prompts, creation accepts `prompt_format="multi_message"` and ordered
+`initial_prompt_messages=[{"role": "system", "content": ...}, ...]`. Pending updates
+use `promptFormat` and `initialPromptMessages`. Avoid flattening a chat template into
+the text-only duplicate override. This workflow executes predictions in Promptic;
+use Agent Optimization submissions when external code executes the full Agent.
+
+### Evaluators
+
+Each evaluator scores one aspect of a prediction. The four targeted checks score one output
+field, or the whole response, with one method on a 0–1 scale. Set `config.field` to a dotted
+path such as `answer` or `user.name`, or leave it out to score the whole response. Paths into
+list items such as `people[].name` are rejected; target the list (`people`) instead.
+
+| Type                 | Scores                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `exactMatch`         | 1 when the value equals the expected value. Numbers use a small tolerance                 |
+| `containsText`       | 1 when the expected text appears in the output, ignoring case and surrounding whitespace  |
+| `semanticSimilarity` | Embedding similarity, shown as Embedding Similarity. Fast and cheap, but approximate      |
+| `aiJudge`            | A model judges whether the output says the same as the expected value                    |
+| `f1`                 | Classification quality across classes                                                    |
+| `referenceJudge`     | Shown as Deviation Judge: rates prediction and expected output separately against your rubric and lowers the score for a difference in either direction |
+| `comparisonJudge`    | Rates the prediction directly against the expected output in one prompt                  |
+| `generalJudge`       | Your own judge messages with `{input}`, `{expected}`, `{predicted}` and dataset columns  |
+| `codeFunction`       | Custom Python or JavaScript scoring in an isolated platform sandbox                       |
+| `toolSelection`      | Attached automatically to tool-selection experiments                                      |
+
+`similarity` (an LLM style comparison) and `structuredOutput` (Schema match across all fields)
+still work for existing setups; new setups use `aiJudge` and targeted checks instead.
+
+```python
+client.create_evaluators(experiment_id, [
+    {"name": "Invoice ID", "type": "exactMatch", "config": {"field": "invoice_id"}},
+    {
+        "name": "Summary",
+        "type": "aiJudge",
+        "config": {
+            "field": "summary",
+            "instructions": "Amounts, currencies and dates must match.",
+        },
+    },
+    {"name": "Mentions refund", "type": "containsText", "enabled": False},
+])
+client.update_evaluator(experiment_id, evaluator_id, enabled=True)
+```
+
+`aiJudge` already applies a built-in "same meaning" rubric; `instructions` adds domain rules on
+top and is rejected for the other targeted types. Include the output schema as
+`config["schema_definition"]` to have the server check that the field exists and suits the method
+before saving. A disabled evaluator (`enabled: False`) keeps its configuration but is not run and
+does not count toward the score. Targeted checks and `enabled` need a platform deployment that
+supports them.
+
+### Code function evaluators
+
+Requires a platform deployment with code evaluator support (Promptic PRO-201).
+These evaluators apply to prompt experiments, not Agent Gym evaluator definitions.
+The sync and async clients accept the same configuration:
+
+```python
+from pathlib import Path
+from promptic_sdk import CodeFunctionConfig
+
+config: CodeFunctionConfig = {
+    "language": "python",  # or "javascript"
+    "source": Path("score.py").read_text(encoding="utf-8"),
+    "function_name": "score",  # optional; score is the fixed entry point
+}
+client.create_evaluators(experiment_id, [{
+    "name": "Exact answer",
+    "type": "codeFunction",
+    "scaleMin": 0,
+    "scaleMax": 1,
+    "weight": 1,
+    "config": config,
+}])
+client.update_evaluator(experiment_id, evaluator_id, config=config)
+```
+
+Save either function as a UTF-8 source file:
+
+```python
+def score(row):
+    return {"score": 1.0 if row["expected"] == row["predicted"] else 0.0,
+            "reason": "Exact comparison"}
+```
+
+```javascript
+function score(row) {
+  return row.expected === row.predicted ? 1 : 0;
+}
+```
+
+Or create the evaluator with the CLI (source is read as text, never imported or run locally):
+
+```bash
+promptic evaluators add EXPERIMENT_ID --name "Python answer" --type codeFunction \
+  --language python --source-file score.py --json
+promptic evaluators add EXPERIMENT_ID --name "JavaScript answer" --type codeFunction \
+  --language javascript --source-file score.js --json
+```
+
+`score(row)` returns a finite number or an object with a finite numeric `score` and an
+optional short string `reason`. Booleans, NaN, and Infinity are not scores. Match
+`scaleMin`/`scaleMax` to your raw scores; `weight` controls the aggregate contribution.
+No result `metadata` field is supported. The row contains:
+
+| Key | Value |
+| --- | --- |
+| `id` | Case identifier (UUIDs are strings) |
+| `input_variables` | Original named input object |
+| `expected` | Reference output |
+| `predicted` | Model output |
+
+Structured outputs arrive as text, not pre-parsed objects. Source is limited to 64 KiB
+of UTF-8. Functions run in the platform's configured, isolated sandbox, not inside your
+SDK/CLI process. Imports, network, filesystem access, subprocesses, package installation,
+and provider credentials are unavailable. Each batch has a five-second execution limit;
+it is not configurable per evaluator. Sandbox usage can consume credits even if the
+function fails after execution starts. Never put secrets in source or diagnostics.
+
+Use `row["id"]` / `row["input_variables"]["question"]` in Python, not attribute access.
+JavaScript uses `row.id` / `row.input_variables.question`. Row contract version 3
+contains only the four fields above. It replaces the old `input` and `variables`
+names and removes the flattened input and miscellaneous prediction metadata.
+Update existing source to use `input_variables` instead of the removed `variables`
+key. There is no replacement for the removed flattened `input` field; access the
+named values under `input_variables` instead. Historical
+scores are not rewritten.
+
+Invalid source, a missing `score`, runtime errors, invalid results, and timeouts
+fail the evaluation, **not** the model's quality score. Safe diagnostics report an
+error code plus exception type and source line when available; arbitrary exception
+messages, full stack traces, and sample values are not exposed. After starting
+the experiment and waiting for completion, use `list_iterations()` and
+`list_experiment_cases(experiment_id, iteration_id=...)` to inspect per-case scores and
+diagnostics (follow `nextCursor` for further pages). Use the persisted iteration ID, not
+the iteration number. An evaluation-only experiment has iteration number zero.
+Each case's `evaluatorScores` entries expose `rawScore`, normalized `score`, and
+`additional.reason` on successful function scores. Errors fail the run rather than
+being represented as minimum quality scores.
+
+### Test a code function before running an experiment
+
+The matching SDK/CLI and server release exposes a one-row sandbox test. It takes
+an explicit sample prediction: no model calls, no saved evaluator, and no quality
+result is created. Sandbox usage may still be billed.
+
+```python
+probe = client.test_code_evaluator(config, {
+    "input_variables": {"question": "Say hello"},
+    "expected": "Hello",
+    "predicted": "Hello",
+})
+# Poll until status is completed or failed. Do not submit another test while waiting.
+state = client.get_code_evaluator_test(probe["id"])
+# state: id, status, result, errorMessage
+# result: score/reason on success; error/error_type/line/column on failure.
+```
+
+`CodeFunctionTestRow` is exported for typing the sample. Only `id` is optional.
+Async clients provide the same methods.
+Test jobs do not require an experiment; authentication must select an AI Application.
+
+Save the sample as UTF-8 JSON (`row.json`), then:
+
+```bash
+promptic evaluators test --language python --source-file score.py --row-file row.json --json
+promptic evaluators test-result TEST_ID --json
+```
+
+Use `--language javascript` with a JS source file for the other runtime. The test
+request is capped at 128 KiB; the CLI limits each file to 64 KiB. A timeout or
+Ctrl-C in the client does not cancel a queued remote test. The dashboard provides
+the same functionality with **Test function**, language-specific row help, and
+source-line error markers. Editing source clears the displayed test result.
+
 ### Tool-selection experiments
 
 Prompt experiments use `create_experiment()` with `classification`, `textGeneration`, or
@@ -267,10 +492,10 @@ the configuration is ready:
 ```python
 from promptic_sdk import (
     AgentGymClient,
+    AIJudge,
     BenchmarkCase,
     BenchmarkFile,
-    FieldScoring,
-    FieldLevelJudge,
+    ExactMatch,
 )
 
 with AgentGymClient(ai_application_id="<ai-application-uuid>") as gym:
@@ -292,12 +517,8 @@ with AgentGymClient(ai_application_id="<ai-application-uuid>") as gym:
             },
         },
         evaluators=[
-            FieldLevelJudge(
-                fields={
-                    "report": FieldScoring(method="judge", judge_instructions="Check cited evidence."),
-                    "confidence": FieldScoring(method="exact"),
-                },
-            )
+            AIJudge("report", instructions="Check cited evidence."),
+            ExactMatch("confidence"),
         ],
     )
     shared = BenchmarkFile("shared-instructions.pdf")
@@ -319,8 +540,11 @@ Benchmark authoring currently follows the platform's alpha API and therefore req
 account. The SDK exposes typed schemas and evaluator models, imports cases in confirmed batches,
 and leaves every authoring change unpublished until `publish()` is called.
 
-The Output schema defines the expected shape. Explicit evaluators define how that output is scored;
-the field-level evaluator can mix deterministic and judge-based strategies per field.
+The Output schema defines the expected shape. Explicit evaluators define how that output is scored:
+targeted checks (`ExactMatch`, `ContainsText`, `SemanticSimilarity`, `AIJudge`) score one field or
+the whole response each. `FieldLevelJudge` (Schema match) is deprecated: the platform no longer
+accepts it, so creating one warns and sending it raises `EvaluatorConfigurationError` with code
+`deprecated_evaluator_kind`. Agents that already use it keep running.
 
 Run a trusted local candidate against an immutable Agent Gym benchmark, upload its output artifacts
 and traces, wait for scoring, and inspect the weakest cases:
@@ -427,7 +651,7 @@ Both clients provide typed methods for the full Promptic REST API:
 | Models         | `models.list` (AI Application-scoped available models)                   |
 | Traces         | `list_traces`, `get_trace`, `list_trace_artifacts`, `get_artifact`, `get_artifact_content`, `download_artifact`, `get_stats` |
 | Components     | `list_components`, `get_component`, `create_component`, `delete_component` |
-| Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment`, `cancel_experiment` |
+| Experiments    | `list_experiments`, `get_experiment`, `create_experiment`, `update_experiment`, `delete_experiment`, `start_experiment`, `cancel_experiment`, `list_experiment_cases` |
 | Dataset cases | `list_dataset_cases`, `get_dataset_case`, `create_dataset_cases`, `update_dataset_case`, `delete_dataset_case` |
 | Evaluators     | `list_evaluators`, `create_evaluators`, `update_evaluator`, `delete_evaluator` |
 | Iterations     | `list_iterations`, `get_iteration`, `get_best_iteration`                |
@@ -465,14 +689,16 @@ The `promptic` CLI mirrors the API client and supports both human-readable table
 promptic [command] [subcommand] [options]
 ```
 
-Agent configurations support multiple `FieldLevelJudge` evaluators, each with independent fields,
-model, and weight. All typed evaluators accept an optional keyword-only `id="stable-id"`;
+Agent configurations support up to 64 targeted checks (`exact_match`, `contains_text`,
+`semantic_similarity`, `ai_judge`) with unique names, each scoring one field with its own model
+and weight; see
+[`examples/agent_gym_targeted_checks.json`](examples/agent_gym_targeted_checks.json). All typed evaluators accept an optional keyword-only `id="stable-id"`;
 CLI JSON configurations preserve the same `id` field. Omit IDs to let the server generate them,
 or reuse explicit IDs to retain evaluator identity when updating or reordering a configuration.
 SDK create/configure calls and CLI imports reject duplicate explicit IDs and repeated `f1`,
 `verifier_agent`, or `expected_behavior_judge` kinds before sending any request, with the
-conflicting indices and a correction. Multiple field-level judges require a server deployment
-with support for them. See the [authoring guide](docs/agent-gym.md) and
+conflicting indices and a correction. The deprecated `field_level_judge` kind is rejected the
+same way. See the [authoring guide](docs/agent-gym.md) and
 [CLI configuration example](examples/agent_gym_multiple_judges.json).
 
 API exceptions include validation paths and messages in their text while preserving structured
@@ -513,7 +739,9 @@ remains on stdout. Without this option, errors are printed as plain text with fi
 | `promptic experiments start <id>`      | Start an experiment                    |
 | `promptic experiments cancel <id>`     | Request cancellation (does not wait)   |
 | `promptic evaluators list`             | List evaluators for an experiment      |
-| `promptic evaluators add`              | Add an evaluator                       |
+| `promptic evaluators add`              | Add an evaluator (`--field`, `--instructions`, `--disabled`, or `--language` / `--source-file` for code functions) |
+| `promptic evaluators enable <id>`      | Switch an evaluator on                 |
+| `promptic evaluators disable <id>`     | Switch an evaluator off                |
 | `promptic evaluators delete <id>`      | Delete an evaluator                    |
 | `promptic iterations list`             | List iterations for an experiment      |
 | `promptic iterations get <id>`         | Get iteration details                  |
@@ -540,7 +768,19 @@ means the request succeeded, not necessarily that the worker has stopped. Check
 `promptic experiments get <id> --json` for the final status.
 
 `promptic experiments create` accepts `--hyperparameters <file>` and
-`--output-schema <file>` JSON documents. Use `--start` to schedule the experiment immediately.
+`--output-schema <file>` JSON documents. Use `--evaluate-only` for evaluation-only
+creation or duplication, `--messages <file>` for ordered chat messages at creation,
+and `experiments update ID --epochs 0` to configure a pending run while preserving
+its other hyperparameters. Tool-selection creation accepts `--epochs 0` or
+`--evaluate-only`. Use `--start` to explicitly schedule a new experiment.
+
+```bash
+promptic experiments duplicate REFERENCE_ID --initial-prompt 'Candidate {input}' --evaluate-only --start --json
+promptic experiments get CANDIDATE_ID --json
+# After completion:
+promptic iterations list CANDIDATE_ID --json
+promptic experiments cases CANDIDATE_ID --iteration-id ITERATION_ID --sort score --limit 25 --json
+```
 
 ## Configuration
 

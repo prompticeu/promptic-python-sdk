@@ -7,7 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 from typing_extensions import Unpack
@@ -15,6 +15,8 @@ from typing_extensions import Unpack
 from promptic_sdk.models import (
     AIApplication,
     AvailableModelList,
+    CodeFunctionConfig,
+    CodeFunctionTestRow,
     Component,
     ComponentCreated,
     ComponentList,
@@ -32,12 +34,15 @@ from promptic_sdk.models import (
     EvaluatorList,
     Experiment,
     ExperimentCancellation,
+    ExperimentCasePage,
     ExperimentList,
     ExperimentStarted,
     IterationList,
     IterationWithScores,
     OptimizationBrief,
     PromptExperimentTaskType,
+    PromptFormat,
+    PromptMessage,
     ToolSelectionTestCase,
     ToolSelectionTool,
     ToolSource,
@@ -109,6 +114,32 @@ def _normalize_tool_selection_test_case(test_case: ToolSelectionTestCase) -> dic
     return {"query": test_case["query"], "expectedTool": expected}
 
 
+def _prompt_hyperparameters(
+    hyperparameters: dict[str, Any] | None, evaluation_only: bool
+) -> dict[str, Any] | None:
+    if not evaluation_only:
+        return hyperparameters
+    if hyperparameters is not None and hyperparameters.get("epochs", 0) != 0:
+        raise ValueError("evaluation_only=True requires epochs=0 or no explicit epochs")
+    return {"numFewShots": 8, **(hyperparameters or {}), "epochs": 0}
+
+
+def _experiment_case_query(
+    iteration_id: int,
+    split: str,
+    limit: int,
+    cursor: str | None,
+    sort: str | None,
+    descending: bool,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"iterationId": iteration_id, "split": split, "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
+    if sort is not None:
+        params.update({"sort": sort, "descending": descending})
+    return params
+
+
 def _tool_selection_body(
     ai_component_id: str,
     tools: list[ToolSelectionTool],
@@ -118,6 +149,7 @@ def _tool_selection_body(
     tool_source: ToolSource,
     system_prompt: str | None,
     optimize_system_prompt: bool,
+    evaluation_only: bool,
     epochs: int | None,
     train_split_ratio: float | None,
     name: str | None,
@@ -138,8 +170,10 @@ def _tool_selection_body(
         body["targetModel"] = target_model
     if system_prompt is not None:
         body["systemPrompt"] = system_prompt
-    if epochs is not None:
-        body["epochs"] = epochs
+    if evaluation_only and epochs not in (None, 0):
+        raise ValueError("evaluation_only=True requires epochs=0 or no explicit epochs")
+    if epochs is not None or evaluation_only:
+        body["epochs"] = 0 if evaluation_only else epochs
     if train_split_ratio is not None:
         body["trainSplitRatio"] = train_split_ratio
     if name is not None:
@@ -425,8 +459,21 @@ class PrompticClient:
         initial_prediction_model_schema: dict[str, Any] | None = None,
         optimization_guidance: OptimizationBrief | None = None,
         input_variables: list[dict[str, str]] | None = None,
+        evaluation_only: bool = False,
+        prompt_format: PromptFormat | None = None,
+        initial_prompt_messages: list[PromptMessage] | None = None,
     ) -> Experiment:
-        """Create an experiment with optional optimizer-only rules."""
+        """Create a pending prompt experiment.
+
+        Set evaluation_only=True to score the supplied prompt once (epochs=0),
+        without prompt optimization. Existing hyperparameters are preserved;
+        an explicit nonzero epochs value conflicts with evaluation_only=True.
+        Supply prompt_format="multi_message" and initial_prompt_messages to
+        preserve an ordered chat template. Call start_experiment separately.
+        """
+        hyperparameters = _prompt_hyperparameters(hyperparameters, evaluation_only)
+        if initial_prompt is not None and initial_prompt_messages is not None:
+            raise ValueError("Supply initial_prompt or initial_prompt_messages, not both")
         body: dict[str, Any] = {
             "aiComponentId": ai_component_id,
             "targetModel": target_model,
@@ -438,6 +485,10 @@ class PrompticClient:
             body["optimizationGuidance"] = optimization_guidance
         if initial_prompt is not None:
             body["initialPrompt"] = initial_prompt
+        if prompt_format is not None:
+            body["promptFormat"] = prompt_format
+        if initial_prompt_messages is not None:
+            body["initialPromptMessages"] = initial_prompt_messages
         if name is not None:
             body["name"] = name
         if description is not None:
@@ -461,6 +512,7 @@ class PrompticClient:
         system_prompt: str | None = None,
         optimize_system_prompt: bool = False,
         optimization_guidance: OptimizationBrief | None = None,
+        evaluation_only: bool = False,
         epochs: int | None = None,
         train_split_ratio: float | None = None,
         name: str | None = None,
@@ -490,8 +542,9 @@ class PrompticClient:
                 evaluation.
             optimize_system_prompt: When True, the optimizer rewrites the system
                 prompt alongside the tool descriptions.
-            epochs: Optional number of optimization rounds.
-            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+            evaluation_only: Evaluate the supplied tools without rewriting them (epochs=0).
+            epochs: Optional number of optimization rounds; 0 evaluates only.
+            train_split_ratio: Optional training fraction in ``[0.3, 0.9]``.
                 Omit to train and score on all test cases.
             name: Optional experiment name.
             optimization_guidance: Optimization rules for this experiment.
@@ -509,6 +562,7 @@ class PrompticClient:
             system_prompt=system_prompt,
             optimize_system_prompt=optimize_system_prompt,
             optimization_guidance=optimization_guidance,
+            evaluation_only=evaluation_only,
             epochs=epochs,
             train_split_ratio=train_split_ratio,
             name=name,
@@ -531,7 +585,7 @@ class PrompticClient:
 
         Accepts keyword arguments matching experiment fields:
         name, description, targetModel, provider, taskType, optimizer,
-        initialPrompt, hyperparameters, initialPredictionModelSchema.
+        promptFormat, initialPromptMessages, hyperparameters, initialPredictionModelSchema.
         ``optimization_guidance`` replaces this experiment's rules and locks;
         pass ``{}`` to clear them. Inherited component rules remain server-managed.
         """
@@ -561,7 +615,7 @@ class PrompticClient:
         return self._post(f"/experiments/{experiment_id}/cancel")
 
     def start_experiment(self, experiment_id: str) -> ExperimentStarted:
-        """Start a pending experiment (enqueue for training).
+        """Start a pending experiment in its configured evaluation or optimization mode.
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
@@ -604,7 +658,44 @@ class PrompticClient:
             body["initialPromptOverride"] = initial_prompt_override
         return self._post(f"/experiments/{experiment_id}/duplicate", json=body)
 
+    def list_experiment_cases(
+        self,
+        experiment_id: str,
+        *,
+        iteration_id: int,
+        split: Literal["all", "train", "eval"] = "all",
+        limit: int = 25,
+        cursor: str | None = None,
+        sort: str | None = None,
+        descending: bool = False,
+    ) -> ExperimentCasePage:
+        """Read one page of predictions and per-evaluator scores for an iteration.
+
+        iteration_id is the persisted iteration ID, not its iteration number.
+        Follow nextCursor explicitly; limits are 1-100. Use sort="score" to
+        inspect low-scoring cases first across the complete selected split.
+        Requires a server release with the experiment case-results API.
+        """
+        return self._get(
+            f"/experiments/{experiment_id}/cases",
+            params=_experiment_case_query(iteration_id, split, limit, cursor, sort, descending),
+        )
+
     # ── Evaluators ───────────────────────────────────────────────────
+
+    def test_code_evaluator(
+        self, config: CodeFunctionConfig, row: CodeFunctionTestRow
+    ) -> dict[str, Any]:
+        """Queue a sandbox function test with explicit output, without model calls.
+
+        Sandbox usage may be billed. Poll get_code_evaluator_test with the returned
+        id. This neither saves an evaluator nor adds a model-quality score.
+        """
+        return self._post("/code-evaluator-tests", json={"config": config, "row": row})
+
+    def get_code_evaluator_test(self, test_id: str) -> dict[str, Any]:
+        """Read a function test's status, score/reason, or safe error diagnostics."""
+        return self._get(f"/code-evaluator-tests/{test_id}")
 
     def list_evaluators(self, experiment_id: str) -> EvaluatorList:
         """List evaluators for an experiment."""
@@ -991,8 +1082,21 @@ class AsyncPrompticClient:
         initial_prediction_model_schema: dict[str, Any] | None = None,
         optimization_guidance: OptimizationBrief | None = None,
         input_variables: list[dict[str, str]] | None = None,
+        evaluation_only: bool = False,
+        prompt_format: PromptFormat | None = None,
+        initial_prompt_messages: list[PromptMessage] | None = None,
     ) -> Experiment:
-        """Create an experiment with optional optimizer-only rules."""
+        """Create a pending prompt experiment.
+
+        Set evaluation_only=True to score the supplied prompt once (epochs=0),
+        without prompt optimization. Existing hyperparameters are preserved;
+        an explicit nonzero epochs value conflicts with evaluation_only=True.
+        Supply prompt_format="multi_message" and initial_prompt_messages to
+        preserve an ordered chat template. Call start_experiment separately.
+        """
+        hyperparameters = _prompt_hyperparameters(hyperparameters, evaluation_only)
+        if initial_prompt is not None and initial_prompt_messages is not None:
+            raise ValueError("Supply initial_prompt or initial_prompt_messages, not both")
         body: dict[str, Any] = {
             "aiComponentId": ai_component_id,
             "targetModel": target_model,
@@ -1004,6 +1108,10 @@ class AsyncPrompticClient:
             body["optimizationGuidance"] = optimization_guidance
         if initial_prompt is not None:
             body["initialPrompt"] = initial_prompt
+        if prompt_format is not None:
+            body["promptFormat"] = prompt_format
+        if initial_prompt_messages is not None:
+            body["initialPromptMessages"] = initial_prompt_messages
         if name is not None:
             body["name"] = name
         if description is not None:
@@ -1027,6 +1135,7 @@ class AsyncPrompticClient:
         system_prompt: str | None = None,
         optimize_system_prompt: bool = False,
         optimization_guidance: OptimizationBrief | None = None,
+        evaluation_only: bool = False,
         epochs: int | None = None,
         train_split_ratio: float | None = None,
         name: str | None = None,
@@ -1056,8 +1165,9 @@ class AsyncPrompticClient:
                 evaluation.
             optimize_system_prompt: When True, the optimizer rewrites the system
                 prompt alongside the tool descriptions.
-            epochs: Optional number of optimization rounds.
-            train_split_ratio: Optional held-out eval split in ``[0.5, 0.9]``.
+            evaluation_only: Evaluate the supplied tools without rewriting them (epochs=0).
+            epochs: Optional number of optimization rounds; 0 evaluates only.
+            train_split_ratio: Optional training fraction in ``[0.3, 0.9]``.
                 Omit to train and score on all test cases.
             name: Optional experiment name.
             optimization_guidance: Optimization rules for this experiment.
@@ -1075,6 +1185,7 @@ class AsyncPrompticClient:
             system_prompt=system_prompt,
             optimize_system_prompt=optimize_system_prompt,
             optimization_guidance=optimization_guidance,
+            evaluation_only=evaluation_only,
             epochs=epochs,
             train_split_ratio=train_split_ratio,
             name=name,
@@ -1120,7 +1231,7 @@ class AsyncPrompticClient:
         return await self._post(f"/experiments/{experiment_id}/cancel")
 
     async def start_experiment(self, experiment_id: str) -> ExperimentStarted:
-        """Start a pending experiment (enqueue for training).
+        """Start a pending experiment in its configured evaluation or optimization mode.
 
         Raises:
             PrompticAPIError: ``402`` when platform billing is enabled and the
@@ -1163,7 +1274,40 @@ class AsyncPrompticClient:
             body["initialPromptOverride"] = initial_prompt_override
         return await self._post(f"/experiments/{experiment_id}/duplicate", json=body)
 
+    async def list_experiment_cases(
+        self,
+        experiment_id: str,
+        *,
+        iteration_id: int,
+        split: Literal["all", "train", "eval"] = "all",
+        limit: int = 25,
+        cursor: str | None = None,
+        sort: str | None = None,
+        descending: bool = False,
+    ) -> ExperimentCasePage:
+        """Read one page of predictions and per-evaluator scores for an iteration.
+
+        iteration_id is the persisted iteration ID, not its iteration number.
+        Follow nextCursor explicitly; limits are 1-100. Use sort="score" to
+        inspect low-scoring cases first across the complete selected split.
+        Requires a server release with the experiment case-results API.
+        """
+        return await self._get(
+            f"/experiments/{experiment_id}/cases",
+            params=_experiment_case_query(iteration_id, split, limit, cursor, sort, descending),
+        )
+
     # ── Evaluators ───────────────────────────────────────────────────
+
+    async def test_code_evaluator(
+        self, config: CodeFunctionConfig, row: CodeFunctionTestRow
+    ) -> dict[str, Any]:
+        """Queue a billable sandbox probe with explicit output and no model calls."""
+        return await self._post("/code-evaluator-tests", json={"config": config, "row": row})
+
+    async def get_code_evaluator_test(self, test_id: str) -> dict[str, Any]:
+        """Read a function test's status and safe diagnostics."""
+        return await self._get(f"/code-evaluator-tests/{test_id}")
 
     async def list_evaluators(self, experiment_id: str) -> EvaluatorList:
         """List evaluators for an experiment."""

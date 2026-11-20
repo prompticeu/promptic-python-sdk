@@ -12,6 +12,7 @@ import promptic_sdk
 from promptic_sdk import (
     AgentGymAPIError,
     AgentGymClient,
+    AIJudge,
     AsyncAgentGymClient,
     BenchmarkCase,
     BenchmarkFile,
@@ -20,11 +21,13 @@ from promptic_sdk import (
     ClassificationF1,
     EvidenceKind,
     EvidencePolicy,
+    ExactMatch,
     ExpectedBehaviorJudge,
     FieldLevelJudge,
     FieldScoring,
     InvestigationBudget,
     MetricBinding,
+    SemanticSimilarity,
     VerifierAgent,
     VerifierMetric,
 )
@@ -97,17 +100,15 @@ async def _replace_async(client: AsyncAgentGymClient, handler: Any, direct: Any)
     client._transport.direct = httpx.AsyncClient(transport=httpx.MockTransport(direct))
 
 
-def _multiple_judges(with_ids: bool) -> list[FieldLevelJudge]:
+def _multiple_judges(with_ids: bool) -> list[AIJudge]:
     return [
-        FieldLevelJudge(
-            fields={
-                "answer": FieldScoring("judge", judge_instructions=f"Check criterion {index}."),
-                "pages": "array_exact" if index % 2 else "array_similarity",
-            },
-            model=f"judge-model-{index}",
-            name=f"Judge {index}",
+        AIJudge(
+            "pages" if index % 2 else "answer",
+            f"Judge {index}",
             weight=index + 1,
             id=f"judge-{index}" if with_ids else None,
+            instructions=f"Check criterion {index}.",
+            model=f"judge-model-{index}",
         )
         for index in range(5)
     ]
@@ -116,25 +117,14 @@ def _multiple_judges(with_ids: bool) -> list[FieldLevelJudge]:
 def _expected_judges(with_ids: bool) -> list[dict[str, Any]]:
     return [
         {
-            "kind": "field_level_judge",
+            "kind": "ai_judge",
             **({"id": f"judge-{index}"} if with_ids else {}),
             "name": f"Judge {index}",
             "model": f"judge-model-{index}",
             "weight": index + 1,
             "required": False,
-            "fields": {
-                "answer": {
-                    "include": True,
-                    "method": "judge",
-                    "judge_instructions": f"Check criterion {index}.",
-                    "weight": 1.0,
-                },
-                "pages": {
-                    "include": True,
-                    "method": "array_exact" if index % 2 else "array_similarity",
-                    "weight": 1.0,
-                },
-            },
+            "field": "pages" if index % 2 else "answer",
+            "instructions": f"Check criterion {index}.",
         }
         for index in range(5)
     ]
@@ -192,6 +182,7 @@ async def test_async_multiple_judges_create_and_update_preserve_independent_conf
     )
 
 
+@pytest.mark.filterwarnings("ignore:FieldLevelJudge:DeprecationWarning")
 def test_evaluator_ids_preserve_existing_positional_constructors():
     metric = VerifierMetric("quality", "Quality", "Check accuracy.")
     evaluators = [
@@ -798,31 +789,30 @@ def test_configure_explicit_field_evaluator_uses_output_schema():
         agent.configure(
             output_schema=output_schema,
             evaluators=[
-                FieldLevelJudge(
-                    fields={
-                        "acceptance_criteria_value": FieldScoring("exact"),
-                        "test_method": FieldScoring("embedding"),
-                        "comment": FieldScoring("exact", include=False),
-                    }
-                ),
+                # `comment` gets no check, so it is not scored.
+                ExactMatch("acceptance_criteria_value"),
+                SemanticSimilarity("test_method"),
                 ExpectedBehaviorJudge(),
             ],
         )
 
     patch = json.loads(requests[1].content)
-    expected_fields = {
-        "acceptance_criteria_value": {"include": True, "method": "exact", "weight": 1.0},
-        "test_method": {"include": True, "method": "embedding", "weight": 1.0},
-        "comment": {"include": False, "method": "exact", "weight": 1.0},
-    }
     assert patch["targetSchema"] == output_schema
-    assert patch["evaluators"][0] == {
-        "kind": "field_level_judge",
-        "weight": 1.0,
-        "required": False,
-        "fields": expected_fields,
-    }
-    assert patch["evaluators"][1]["kind"] == "expected_behavior_judge"
+    assert patch["evaluators"][:2] == [
+        {
+            "kind": "exact_match",
+            "weight": 1.0,
+            "required": False,
+            "field": "acceptance_criteria_value",
+        },
+        {
+            "kind": "semantic_similarity",
+            "weight": 1.0,
+            "required": False,
+            "field": "test_method",
+        },
+    ]
+    assert patch["evaluators"][2]["kind"] == "expected_behavior_judge"
     assert "evaluatorGraph" not in patch
 
 
@@ -843,15 +833,13 @@ def test_create_accepts_output_schema_with_explicit_field_evaluator():
             name="Structured benchmark",
             goal="Extract the answer.",
             output_schema=schema,
-            evaluators=[FieldLevelJudge(fields={"answer": "exact"})],
+            evaluators=[ExactMatch("answer")],
         )
 
     assert bodies[0]["targetSchema"] == schema
     assert bodies[0]["aiApplicationId"] == WORKSPACE_ID
     assert "workspaceId" not in bodies[0]
-    assert bodies[0]["evaluators"][0]["fields"] == {
-        "answer": {"include": True, "method": "exact", "weight": 1.0}
-    }
+    assert bodies[0]["evaluators"][0]["field"] == "answer"
 
 
 def test_scoped_api_key_can_create_and_list_without_application_id(monkeypatch):
@@ -1254,26 +1242,20 @@ async def test_async_configure_explicit_field_evaluator_matches_sync_contract():
         await benchmark.configure(
             output_schema=schema,
             evaluators=[
-                FieldLevelJudge(
-                    fields={
-                        "rationale": FieldScoring("judge", judge_instructions="Check evidence."),
-                        "citations": FieldScoring(method="array_similarity"),
-                    }
-                )
+                AIJudge("rationale", instructions="Check evidence."),
+                SemanticSimilarity("citations"),
             ],
         )
 
     patch = json.loads(requests[1].content)
     assert patch["targetSchema"] == schema
-    assert patch["evaluators"][0]["fields"] == {
-        "rationale": {
-            "include": True,
-            "method": "judge",
-            "weight": 1.0,
-            "judge_instructions": "Check evidence.",
-        },
-        "citations": {"include": True, "method": "array_similarity", "weight": 1.0},
-    }
+    assert [
+        (evaluator["kind"], evaluator["field"], evaluator.get("instructions"))
+        for evaluator in patch["evaluators"]
+    ] == [
+        ("ai_judge", "rationale", "Check evidence."),
+        ("semantic_similarity", "citations", None),
+    ]
 
 
 def test_authoring_admin_gate_maps_to_agent_gym_error():

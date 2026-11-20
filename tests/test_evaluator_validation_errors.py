@@ -12,8 +12,10 @@ import pytest
 
 from promptic_sdk import (
     AgentGymClient,
+    AIJudge,
     AsyncAgentGymClient,
     ClassificationF1,
+    ExactMatch,
     ExpectedBehaviorJudge,
     FieldLevelJudge,
     VerifierAgent,
@@ -56,8 +58,8 @@ def test_sync_rejects_duplicate_explicit_ids_before_any_request(operation, monke
         request = MagicMock(side_effect=AssertionError("must not send a request"))
         monkeypatch.setattr(client._transport, "request", request)
         judges = [
-            FieldLevelJudge(id="shared", name="Answer"),
-            FieldLevelJudge(id="shared", name="Pages"),
+            AIJudge(name="Answer", id="shared"),
+            AIJudge(name="Pages", id="shared"),
         ]
         with pytest.raises(EvaluatorConfigurationError) as raised:
             if operation == "create":
@@ -78,8 +80,8 @@ async def test_async_rejects_duplicate_explicit_ids_before_any_request(operation
         request = MagicMock(side_effect=AssertionError("must not send a request"))
         monkeypatch.setattr(client._transport, "request", request)
         judges = [
-            FieldLevelJudge(id="shared", name="Answer"),
-            FieldLevelJudge(id="shared", name="Pages"),
+            AIJudge(name="Answer", id="shared"),
+            AIJudge(name="Pages", id="shared"),
         ]
         with pytest.raises(EvaluatorConfigurationError) as raised:
             if operation == "create":
@@ -152,7 +154,7 @@ def test_duplicate_ids_are_unique_across_kinds_and_report_every_conflict():
     with pytest.raises(EvaluatorConfigurationError) as raised:
         validate_evaluators(
             [
-                FieldLevelJudge(id="shared"),
+                AIJudge(id="shared"),
                 ClassificationF1(("label",), id="shared"),
                 ClassificationF1(("other",), id="shared"),
             ]
@@ -179,18 +181,31 @@ def test_typed_evaluators_reject_invalid_explicit_ids(kind, invalid_id):
             _singleton(kind, id=invalid_id)
 
 
-def test_single_judge_preserves_both_field_rules(monkeypatch):
+def test_field_level_judge_warns_that_it_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="AIJudge"):
+        FieldLevelJudge(fields={"answer": "judge"})
+
+
+@pytest.mark.filterwarnings("ignore:FieldLevelJudge:DeprecationWarning")
+@pytest.mark.parametrize("operation", ["create", "configure"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_deprecated_field_level_judge_is_rejected_before_any_request(
+    operation, enabled, monkeypatch
+):
     with AgentGymClient(api_key="ptc_test") as client:
-        request = MagicMock(return_value={"id": BENCHMARK_ID})
+        request = MagicMock(side_effect=AssertionError("must not send a request"))
         monkeypatch.setattr(client._transport, "request", request)
-        client.benchmarks.create(
-            name="QA",
-            goal="Answer questions",
-            evaluators=[FieldLevelJudge(fields={"answer": "judge", "pages": "array_exact"})],
-        )
-        fields = request.call_args.args[0].json["evaluators"][0]["fields"]
-        assert fields["answer"]["method"] == "judge"
-        assert fields["pages"]["method"] == "array_exact"
+        evaluators = [ExactMatch("pages"), FieldLevelJudge(enabled=enabled)]
+        with pytest.raises(EvaluatorConfigurationError) as raised:
+            if operation == "create":
+                client.benchmarks.create(name="QA", goal="Answer questions", evaluators=evaluators)
+            else:
+                benchmark = AgentGymBenchmark(client.benchmarks, {"id": BENCHMARK_ID})
+                benchmark.configure(evaluators=evaluators)
+        assert raised.value.code == "deprecated_evaluator_kind"
+        assert raised.value.details["issues"][0]["path"] == ["evaluators", 1, "kind"]
+        assert "can no longer be configured" in str(raised.value)
+        request.assert_not_called()
 
 
 @pytest.mark.parametrize("body", BODIES)
@@ -251,21 +266,24 @@ def _run_apply(monkeypatch, tmp_path, payload, *, error_format="text", api_error
 
 
 @pytest.mark.parametrize("error_format", ["text", "json"])
-@pytest.mark.parametrize("duplicate", ["id", "kind"])
+@pytest.mark.parametrize("duplicate", ["id", "kind", "name"])
 def test_cli_local_duplicate_error_is_actionable_and_makes_no_client(
     monkeypatch, tmp_path, capsys, error_format, duplicate
 ):
-    evaluators = (
-        [
-            {"kind": "field_level_judge", "id": "shared", "name": "Answer"},
-            {"kind": "field_level_judge", "id": "shared", "name": "Pages"},
-        ]
-        if duplicate == "id"
-        else [
+    evaluators = {
+        "id": [
+            {"kind": "ai_judge", "id": "shared", "name": "Answer"},
+            {"kind": "exact_match", "id": "shared", "name": "Pages"},
+        ],
+        "kind": [
             {"kind": "f1", "id": "first", "fieldPaths": ["label"]},
             {"kind": "f1", "id": "second", "fieldPaths": ["label"]},
-        ]
-    )
+        ],
+        "name": [
+            {"kind": "exact_match", "field": "answer", "name": "Answer"},
+            {"kind": "ai_judge", "field": "answer", "name": "Answer"},
+        ],
+    }[duplicate]
     client = _run_apply(
         monkeypatch,
         tmp_path,
@@ -284,11 +302,11 @@ def test_cli_local_duplicate_error_is_actionable_and_makes_no_client(
         assert body["details"]["issues"][0]["firstIndex"] == 0
     else:
         assert f"evaluators[1].{duplicate}" in output.err
-        assert (
-            "Choose a distinct id or omit it"
-            if duplicate == "id"
-            else "Only one evaluator of kind 'f1'"
-        ) in output.err
+        assert {
+            "id": "Choose a distinct id or omit it",
+            "kind": "Only one evaluator of kind 'f1'",
+            "name": "Give each targeted evaluator a unique name",
+        }[duplicate] in " ".join(output.err.split())
 
 
 @pytest.mark.parametrize("body", BODIES)

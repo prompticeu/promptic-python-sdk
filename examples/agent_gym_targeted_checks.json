@@ -1,0 +1,73 @@
+{
+  "name": "Invoice extraction with targeted checks",
+  "goal": "Extract the invoice number, total, supplier and a short summary from an invoice.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice_text": {"type": "string"}
+    },
+    "required": ["invoice_text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice_id": {"type": "string"},
+      "total": {"type": "number"},
+      "supplier": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "website": {"type": "string"}
+        },
+        "required": ["name"]
+      },
+      "summary": {"type": "string"}
+    },
+    "required": ["invoice_id", "total", "supplier", "summary"]
+  },
+  "evaluators": [
+    {
+      "kind": "exact_match",
+      "id": "invoice-id",
+      "name": "Invoice ID",
+      "field": "invoice_id",
+      "weight": 2,
+      "required": true
+    },
+    {
+      "kind": "exact_match",
+      "id": "total",
+      "name": "Total",
+      "field": "total",
+      "weight": 2
+    },
+    {
+      "kind": "contains_text",
+      "id": "supplier-website",
+      "name": "Supplier website",
+      "field": "supplier.website"
+    },
+    {
+      "kind": "ai_judge",
+      "id": "supplier-name",
+      "name": "Supplier name",
+      "field": "supplier.name",
+      "instructions": "Accept abbreviations and missing legal suffixes such as GmbH or Inc."
+    },
+    {
+      "kind": "ai_judge",
+      "id": "summary",
+      "name": "Summary",
+      "field": "summary",
+      "instructions": "Amounts, currencies and dates mentioned in the summary must match."
+    },
+    {
+      "kind": "semantic_similarity",
+      "id": "summary-similarity",
+      "name": "Summary wording",
+      "field": "summary",
+      "weight": 0.5,
+      "enabled": false
+    }
+  ]
+}
