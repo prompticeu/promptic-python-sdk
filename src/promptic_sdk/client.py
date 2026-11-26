@@ -13,9 +13,11 @@ import httpx
 from typing_extensions import Unpack
 
 from promptic_sdk.models import (
+    AgentGymCodeFunctionTestRow,
     AIApplication,
     AvailableModelList,
     CodeFunctionConfig,
+    CodeFunctionRowContract,
     CodeFunctionTestRow,
     Component,
     ComponentCreated,
@@ -122,6 +124,18 @@ def _prompt_hyperparameters(
     if hyperparameters is not None and hyperparameters.get("epochs", 0) != 0:
         raise ValueError("evaluation_only=True requires epochs=0 or no explicit epochs")
     return {"numFewShots": 8, **(hyperparameters or {}), "epochs": 0}
+
+
+def code_function_test_body(
+    config: CodeFunctionConfig,
+    row: CodeFunctionTestRow | AgentGymCodeFunctionTestRow,
+    row_contract: CodeFunctionRowContract,
+) -> dict[str, Any]:
+    """Build a function-test request; the default contract keeps the original payload."""
+    body: dict[str, Any] = {"config": config, "row": row}
+    if row_contract != "experiment":
+        body["row_contract"] = row_contract
+    return body
 
 
 def _experiment_case_query(
@@ -684,14 +698,22 @@ class PrompticClient:
     # ── Evaluators ───────────────────────────────────────────────────
 
     def test_code_evaluator(
-        self, config: CodeFunctionConfig, row: CodeFunctionTestRow
+        self,
+        config: CodeFunctionConfig,
+        row: CodeFunctionTestRow | AgentGymCodeFunctionTestRow,
+        *,
+        row_contract: CodeFunctionRowContract = "experiment",
     ) -> dict[str, Any]:
         """Queue a sandbox function test with explicit output, without model calls.
 
-        Sandbox usage may be billed. Poll get_code_evaluator_test with the returned
-        id. This neither saves an evaluator nor adds a model-quality score.
+        Use ``row_contract="agent_gym"`` with an ``AgentGymCodeFunctionTestRow`` to test
+        an Agent Gym ``CodeFunction``. Sandbox usage may be billed. Poll
+        get_code_evaluator_test with the returned id. This neither saves an evaluator
+        nor adds a model-quality score.
         """
-        return self._post("/code-evaluator-tests", json={"config": config, "row": row})
+        return self._post(
+            "/code-evaluator-tests", json=code_function_test_body(config, row, row_contract)
+        )
 
     def get_code_evaluator_test(self, test_id: str) -> dict[str, Any]:
         """Read a function test's status, score/reason, or safe error diagnostics."""
@@ -1300,10 +1322,16 @@ class AsyncPrompticClient:
     # ── Evaluators ───────────────────────────────────────────────────
 
     async def test_code_evaluator(
-        self, config: CodeFunctionConfig, row: CodeFunctionTestRow
+        self,
+        config: CodeFunctionConfig,
+        row: CodeFunctionTestRow | AgentGymCodeFunctionTestRow,
+        *,
+        row_contract: CodeFunctionRowContract = "experiment",
     ) -> dict[str, Any]:
         """Queue a billable sandbox probe with explicit output and no model calls."""
-        return await self._post("/code-evaluator-tests", json={"config": config, "row": row})
+        return await self._post(
+            "/code-evaluator-tests", json=code_function_test_body(config, row, row_contract)
+        )
 
     async def get_code_evaluator_test(self, test_id: str) -> dict[str, Any]:
         """Read a function test's status and safe diagnostics."""

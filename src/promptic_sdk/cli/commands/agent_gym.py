@@ -17,6 +17,7 @@ from promptic_sdk.agent_gym import (
     BenchmarkCase,
     BenchmarkFile,
     ClassificationF1,
+    CodeFunction,
     ContainsText,
     EvidenceKind,
     EvidencePolicy,
@@ -30,7 +31,10 @@ from promptic_sdk.agent_gym import (
     VerifierAgent,
     VerifierMetric,
 )
-from promptic_sdk.agent_gym.authoring_models import validate_evaluators
+from promptic_sdk.agent_gym.authoring_models import (
+    MAX_CODE_FUNCTION_SOURCE_BYTES,
+    validate_evaluators,
+)
 
 agent_gym_app = typer.Typer(help="Configure Agent Optimization components and revisions.")
 console = Console()
@@ -143,7 +147,30 @@ def _metric_bindings(value: Any) -> dict[str, MetricBinding]:
     return bindings
 
 
-def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
+def _code_function_source(value: dict[str, Any], base: Path | None) -> str:
+    """Read inline ``source`` or ``sourceFile`` (relative to agent.json) as data."""
+    inline, source_file = value.get("source"), value.get("sourceFile")
+    if (inline is None) == (source_file is None):
+        raise ValueError("code_function requires exactly one of source or sourceFile")
+    if inline is not None:
+        if not isinstance(inline, str):
+            raise ValueError("code_function source must be a string")
+        return inline
+    if not isinstance(source_file, str) or not source_file:
+        raise ValueError("code_function sourceFile must be a relative path")
+    path = (base or Path.cwd()) / source_file
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_CODE_FUNCTION_SOURCE_BYTES + 1)
+        source = raw.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"code_function sourceFile must be a readable UTF-8 file: {path}") from exc
+    if len(raw) > MAX_CODE_FUNCTION_SOURCE_BYTES:
+        raise ValueError("code_function source must be at most 64 KiB")
+    return source
+
+
+def _evaluator(value: dict[str, Any], base: Path | None = None) -> AgentEvaluator:
     fields = {}
     for path, configuration in value.get("fields", {}).items():
         if not isinstance(configuration, dict):
@@ -197,6 +224,28 @@ def _evaluator(value: dict[str, Any]) -> AgentEvaluator:
             weight,
             required,
             threshold,
+            id=evaluator_id,
+            enabled=enabled,
+        )
+    if kind == "code_function":
+        allowed = (_COMMON_EVALUATOR_KEYS - {"threshold"}) | {
+            "language",
+            "source",
+            "sourceFile",
+            "scaleMin",
+            "scaleMax",
+        }
+        if unknown := set(value) - allowed:
+            raise ValueError(f"unsupported code_function field(s): {', '.join(sorted(unknown))}")
+        return CodeFunction(
+            _code_function_source(value, base),
+            value.get("language", "python"),
+            name,
+            description,
+            weight,
+            required,
+            float(value.get("scaleMin", 0)),
+            float(value.get("scaleMax", 1)),
             id=evaluator_id,
             enabled=enabled,
         )
@@ -291,7 +340,7 @@ def apply_agent_config(
 ) -> None:
     """Create and fully configure an Agent component from one JSON file."""
     payload = json.loads(config.read_text())
-    evaluators = [_evaluator(item) for item in payload.get("evaluators", [])]
+    evaluators = [_evaluator(item, config.parent) for item in payload.get("evaluators", [])]
     validate_evaluators(evaluators)
     with AgentGymClient(ai_application_id=payload.get("aiApplicationId")) as client:
         agent = client.benchmarks.create(

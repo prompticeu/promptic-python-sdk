@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.0 (2026-11-26)
+
+## Features
+
+- Added a `CodeFunction` evaluator to Agent Gym for evaluating code-based functions.
+
+
 ## v1.8.0 (2026-11-20)
 
 ## Features

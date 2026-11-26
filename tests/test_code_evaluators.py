@@ -293,7 +293,9 @@ def test_cli_queues_and_polls_one_row_probe(tmp_path, language):
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["id"] == "test-id"
         client.test_code_evaluator.assert_called_once_with(
-            {"language": language, "source": SOURCES[language], "function_name": "score"}, row
+            {"language": language, "source": SOURCES[language], "function_name": "score"},
+            row,
+            row_contract="experiment",
         )
         result = CliRunner().invoke(app, ["evaluators", "test-result", "test-id", "--json"])
         assert result.exit_code == 0, result.output

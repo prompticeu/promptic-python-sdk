@@ -223,6 +223,57 @@ for example `{"kind": "ai_judge", "field": "summary", "instructions": "..."}`; s
 [`examples/agent_gym_targeted_checks.json`](../examples/agent_gym_targeted_checks.json).
 Targeted checks require a platform deployment that supports them.
 
+### Code functions
+
+`CodeFunction` scores each case with your own deterministic `score(row)` function, written in
+Python or JavaScript and run in the platform sandbox. It returns a finite number or
+`{"score": number, "reason": str}`. The row holds native JSON values:
+
+| Key                 | Value                                                 |
+| ------------------- | ----------------------------------------------------- |
+| `id`                | Test case identifier                                  |
+| `inputs`            | The case inputs (JSON object)                         |
+| `output`            | The submitted agent output                            |
+| `expected_output`   | The case's Expected Output, or `None` when it has none |
+| `expected_behavior` | The case's Expected Behavior text, or `None`           |
+
+```python
+from pathlib import Path
+
+from promptic_sdk import CodeFunction, ExactMatch
+
+benchmark.configure(
+    evaluators=[
+        ExactMatch("invoice_id", "Invoice ID"),
+        CodeFunction(Path("checks/line_items.py").read_text(), name="Line items sum to total"),
+        CodeFunction(
+            "function score(row) { return row.output.total > 0 ? 1 : 0 }",
+            "javascript",
+            name="Positive total",
+            scale_min=0,
+            scale_max=1,
+        ),
+    ]
+)
+```
+
+Scores are normalized to 0-1 with `scale_min`/`scale_max`, and the function's `reason` is shown
+with each case result. A runtime error, invalid return value or timeout fails only that case;
+invalid source or a missing `score` function fails every case for that evaluator. Generated files
+appear in `output` as artifact references, and execution traces are not passed; use
+`VerifierAgent` for those. Source is limited to 64 KiB and imports, network, filesystem,
+subprocesses and provider credentials are unavailable. A plan holds up to 16 code functions with
+unique names. Sandbox compute is billed per batch of up to 100 cases.
+
+CLI JSON entries take inline `source` or a `sourceFile` path relative to the configuration file:
+`{"kind": "code_function", "name": "Line items", "sourceFile": "checks/line_items.py"}`. Test a
+function on one sample case before saving it:
+
+```bash
+promptic evaluators test --language python --source-file checks/line_items.py \
+  --row-file sample-case.json --row-contract agent_gym --json
+```
+
 ### Schema match (field-level judge) is deprecated
 
 `FieldLevelJudge` (shown as Schema match in the dashboard) scored several fields in one evaluator.

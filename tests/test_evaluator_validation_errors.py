@@ -305,7 +305,7 @@ def test_cli_local_duplicate_error_is_actionable_and_makes_no_client(
         assert {
             "id": "Choose a distinct id or omit it",
             "kind": "Only one evaluator of kind 'f1'",
-            "name": "Give each targeted evaluator a unique name",
+            "name": "Give each targeted evaluator and code function a unique name",
         }[duplicate] in " ".join(output.err.split())
 
 

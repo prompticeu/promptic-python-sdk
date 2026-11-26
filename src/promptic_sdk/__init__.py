@@ -36,6 +36,7 @@ from promptic_sdk.agent_gym import (
     BulkCaseUploadError,
     CaseResultSort,
     ClassificationF1,
+    CodeFunction,
     ContainsText,
     CreatedBenchmarkCase,
     DownloadedBenchmarkDataset,
@@ -62,10 +63,12 @@ from promptic_sdk.agent_gym import (
 )
 from promptic_sdk.client import AsyncPrompticClient, PrompticAPIError, PrompticClient
 from promptic_sdk.models import (
+    AgentGymCodeFunctionTestRow,
     AIApplication,
     AvailableModel,
     AvailableModelList,
     CodeFunctionConfig,
+    CodeFunctionRowContract,
     CodeFunctionTestRow,
     Component,
     ComponentCreated,
@@ -131,10 +134,11 @@ from promptic_sdk.tracing import (
     init,
 )
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 __all__ = [
     "AgentEvaluator",
     "AIJudge",
+    "CodeFunction",
     "AgentGymAPIError",
     "AgentGymBenchmark",
     "AgentGymBenchmarkCases",
@@ -247,6 +251,8 @@ __all__ = [
     "SpanEvent",
     "TargetedEvaluatorConfig",
     "CodeFunctionConfig",
+    "AgentGymCodeFunctionTestRow",
+    "CodeFunctionRowContract",
     "CodeFunctionTestRow",
     "TargetedEvaluatorType",
     "TaskType",

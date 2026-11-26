@@ -268,8 +268,8 @@ class CodeFunctionConfig(_CodeFunctionConfigOptional):
 
     Define ``score(row)`` and return a finite number or ``{score, reason?}``.
     Source is limited to 64 KiB of UTF-8. No imports, network, filesystem,
-    subprocesses, or provider credentials are available. This is not an
-    Agent Gym evaluator kind. Version-3 rows contain only ``id``,
+    subprocesses, or provider credentials are available. For Agent Gym, use the
+    typed ``CodeFunction`` evaluator instead. Version-3 rows contain only ``id``,
     ``input_variables`` (original named values), ``expected``, and ``predicted``.
     Python uses dictionary keys, not attribute access.
     Execution errors fail evaluation instead of becoming low quality scores.
@@ -291,6 +291,28 @@ class CodeFunctionTestRow(_CodeFunctionTestRowOptional):
     input_variables: dict[str, Any]
     expected: str
     predicted: str
+
+
+class _AgentGymCodeFunctionTestRowOptional(TypedDict, total=False):
+    """Optional fields in an Agent Gym function-test sample."""
+
+    id: str | int
+    expected_output: Any
+    expected_behavior: str | None
+
+
+class AgentGymCodeFunctionTestRow(_AgentGymCodeFunctionTestRowOptional):
+    """Agent Gym sample row: case inputs and a submitted output as native JSON values.
+
+    ``expected_output`` and ``expected_behavior`` default to ``None``, as in a case
+    without them.
+    """
+
+    inputs: dict[str, Any]
+    output: Any
+
+
+CodeFunctionRowContract = Literal["experiment", "agent_gym"]
 
 
 class TargetedEvaluatorConfig(TypedDict, total=False):

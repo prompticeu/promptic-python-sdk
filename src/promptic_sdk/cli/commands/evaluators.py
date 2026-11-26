@@ -14,7 +14,13 @@ from rich.table import Table
 
 from promptic_sdk._evaluator_fields import TARGETED_EVALUATOR_TYPES, validate_target_field
 from promptic_sdk.cli import get_client
-from promptic_sdk.models import CodeFunctionConfig, CodeFunctionTestRow
+from promptic_sdk.client import code_function_test_body
+from promptic_sdk.models import (
+    AgentGymCodeFunctionTestRow,
+    CodeFunctionConfig,
+    CodeFunctionRowContract,
+    CodeFunctionTestRow,
+)
 
 evaluators_app = typer.Typer(help="Manage evaluators.")
 console = Console()
@@ -188,9 +194,19 @@ def test_code_evaluator(
         ..., "--source-file", exists=True, dir_okay=False, readable=True
     ),
     row_file: Path = typer.Option(..., "--row-file", exists=True, dir_okay=False, readable=True),
+    row_contract: str = typer.Option(
+        "experiment",
+        "--row-contract",
+        help=(
+            "experiment (input_variables, expected, predicted) or agent_gym "
+            "(inputs, output, expected_output, expected_behavior)."
+        ),
+    ),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Queue a sandbox probe with an explicit sample output; usage may be billed."""
+    if row_contract not in {"experiment", "agent_gym"}:
+        raise typer.BadParameter("choose experiment or agent_gym", param_hint="--row-contract")
     config = _code_function_config("codeFunction", language, source_file)
     try:
         with row_file.open("rb") as handle:
@@ -202,7 +218,18 @@ def test_code_evaluator(
         raise typer.BadParameter(
             "must be a readable UTF-8 JSON object", param_hint="--row-file"
         ) from exc
-    if (
+    if row_contract == "agent_gym":
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("inputs"), dict)
+            or "output" not in row
+            or not isinstance(row.get("expected_behavior"), str | None)
+        ):
+            raise typer.BadParameter(
+                "requires inputs (object) and output; expected_behavior must be a string",
+                param_hint="--row-file",
+            )
+    elif (
         not isinstance(row, dict)
         or not isinstance(row.get("input_variables"), dict)
         or not isinstance(row.get("expected"), str)
@@ -212,16 +239,19 @@ def test_code_evaluator(
             "requires input_variables (object), expected and predicted (strings)",
             param_hint="--row-file",
         )
-    payload = httpx.Request("POST", "https://localhost", json={"config": config, "row": row})
+    contract = cast(CodeFunctionRowContract, row_contract)
+    typed_config = cast(CodeFunctionConfig, config)
+    typed_row = cast(CodeFunctionTestRow | AgentGymCodeFunctionTestRow, row)
+    payload = httpx.Request(
+        "POST", "https://localhost", json=code_function_test_body(typed_config, typed_row, contract)
+    )
     if len(payload.content) > 128 * 1024:
         raise typer.BadParameter(
             "combined JSON request must be at most 128 KiB, including escaping and envelope",
             param_hint="--source-file / --row-file",
         )
     with get_client() as client:
-        result = client.test_code_evaluator(
-            cast(CodeFunctionConfig, config), cast(CodeFunctionTestRow, row)
-        )
+        result = client.test_code_evaluator(typed_config, typed_row, row_contract=contract)
     if output_json:
         json.dump(result, sys.stdout, indent=2, default=str)
         sys.stdout.write("\n")

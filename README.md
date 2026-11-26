@@ -691,7 +691,8 @@ promptic [command] [subcommand] [options]
 
 Agent configurations support up to 64 targeted checks (`exact_match`, `contains_text`,
 `semantic_similarity`, `ai_judge`) with unique names, each scoring one field with its own model
-and weight; see
+and weight, and up to 16 `code_function` evaluators that score each case with your own sandboxed
+Python or JavaScript `score(row)` (see [Code functions](docs/agent-gym.md#code-functions)); see
 [`examples/agent_gym_targeted_checks.json`](examples/agent_gym_targeted_checks.json). All typed evaluators accept an optional keyword-only `id="stable-id"`;
 CLI JSON configurations preserve the same `id` field. Omit IDs to let the server generate them,
 or reuse explicit IDs to retain evaluator identity when updating or reordering a configuration.

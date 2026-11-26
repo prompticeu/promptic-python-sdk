@@ -180,6 +180,7 @@ EvaluatorKind = Literal[
     "contains_text",
     "semantic_similarity",
     "ai_judge",
+    "code_function",
 ]
 TARGETED_EVALUATOR_KINDS: frozenset[str] = frozenset(
     {"exact_match", "contains_text", "semantic_similarity", "ai_judge"}
@@ -189,7 +190,14 @@ TARGETED_EVALUATOR_KINDS: frozenset[str] = frozenset(
 MAX_TARGETED_EVALUATORS = 64
 """Most targeted evaluators one evaluation plan accepts."""
 
-_REPEATABLE_EVALUATOR_KINDS = TARGETED_EVALUATOR_KINDS | {"field_level_judge"}
+MAX_CODE_FUNCTION_EVALUATORS = 16
+"""Most Code Function evaluators one evaluation plan accepts."""
+
+MAX_CODE_FUNCTION_SOURCE_BYTES = 64 * 1024
+"""Largest Code Function source, in UTF-8 bytes."""
+
+_NAMED_REPEATABLE_EVALUATOR_KINDS = TARGETED_EVALUATOR_KINDS | {"code_function"}
+_REPEATABLE_EVALUATOR_KINDS = _NAMED_REPEATABLE_EVALUATOR_KINDS | {"field_level_judge"}
 
 FIELD_LEVEL_JUDGE_DEPRECATION = (
     "FieldLevelJudge (field_level_judge, shown as Schema match) is deprecated and can no "
@@ -538,6 +546,58 @@ class AIJudge(_TargetedEvaluator):
 
 
 @dataclass(frozen=True)
+class CodeFunction(AgentEvaluator):
+    """Score each case with your own deterministic ``score(row)`` function.
+
+    The function runs in the platform sandbox, written in Python or JavaScript, and
+    returns a finite number or ``{"score": number, "reason": str}``. Each row is a JSON
+    object with ``id``, ``inputs`` (the case inputs), ``output`` (the submitted agent
+    output), ``expected_output`` and ``expected_behavior`` (``None`` when absent).
+    Scores are normalized to 0-1 using ``scale_min``/``scale_max``. Source is limited
+    to 64 KiB; imports, network, filesystem, subprocesses and provider credentials are
+    unavailable. Generated files appear in ``output`` as artifact references, and
+    execution traces are not passed. A runtime error or invalid return value fails only
+    that case. Sandbox compute is billed per batch of up to 100 cases.
+    """
+
+    source: str
+    language: Literal["python", "javascript"] = "python"
+    name: str | None = None
+    description: str | None = None
+    weight: float = 1.0
+    required: bool = False
+    scale_min: float = 0.0
+    scale_max: float = 1.0
+    id: str | None = field(default=None, kw_only=True)
+    enabled: bool = field(default=True, kw_only=True)
+    threshold: None = field(default=None, init=False)
+    kind: ClassVar[Literal["code_function"]] = "code_function"
+
+    def __post_init__(self) -> None:
+        """Validate the language, source and score range."""
+        self._validate_common()
+        if self.language not in ("python", "javascript"):
+            raise ValueError("code function language must be 'python' or 'javascript'")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError("code function source cannot be empty")
+        if len(self.source.encode("utf-8")) > MAX_CODE_FUNCTION_SOURCE_BYTES:
+            raise ValueError("code function source must be at most 64 KiB")
+        if self.scale_min == self.scale_max:
+            raise ValueError("code function scale_min and scale_max must differ")
+
+    def _specific_request(self) -> dict[str, Any]:
+        return {
+            "language": self.language,
+            "source": self.source,
+            **(
+                {"scaleMin": self.scale_min, "scaleMax": self.scale_max}
+                if (self.scale_min, self.scale_max) != (0.0, 1.0)
+                else {}
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class BenchmarkFile:
     """A local input or private reference file for a benchmark case."""
 
@@ -819,7 +879,9 @@ def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
     ``expected_behavior_judge`` allow one evaluator each, disabled ones included.
     Targeted evaluators (``ExactMatch``, ``ContainsText``, ``SemanticSimilarity``,
     ``AIJudge``) are repeatable; they need unique names and are limited to
-    ``MAX_TARGETED_EVALUATORS``. The deprecated ``FieldLevelJudge`` is rejected.
+    ``MAX_TARGETED_EVALUATORS``. ``CodeFunction`` evaluators are repeatable, need unique
+    names and are limited to ``MAX_CODE_FUNCTION_EVALUATORS``. The deprecated
+    ``FieldLevelJudge`` is rejected.
     """
     seen_ids: dict[str, int] = {}
     seen_kinds: dict[str, int] = {}
@@ -836,6 +898,18 @@ def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
                 "message": (
                     f"At most {MAX_TARGETED_EVALUATORS} targeted evaluators are supported; "
                     f"got {targeted_count}."
+                ),
+            }
+        )
+    code_function_count = sum(1 for evaluator in evaluators if evaluator.kind == "code_function")
+    if code_function_count > MAX_CODE_FUNCTION_EVALUATORS:
+        issues.append(
+            {
+                "code": "too_many_code_function_evaluators",
+                "path": ["evaluators"],
+                "message": (
+                    f"At most {MAX_CODE_FUNCTION_EVALUATORS} Code Function evaluators are "
+                    f"supported; got {code_function_count}."
                 ),
             }
         )
@@ -868,7 +942,7 @@ def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
                 seen_ids[evaluator.id] = index
         kind = evaluator.kind
         name = evaluator.name.strip() if isinstance(evaluator.name, str) else ""
-        if kind in TARGETED_EVALUATOR_KINDS and name:
+        if kind in _NAMED_REPEATABLE_EVALUATOR_KINDS and name:
             if name in seen_names:
                 first_index = seen_names[name]
                 issues.append(
@@ -880,7 +954,7 @@ def validate_evaluators(evaluators: Sequence[AgentEvaluator]) -> None:
                         "message": (
                             f"Evaluator name '{name}' is used more than once; first configured "
                             f"at evaluators[{first_index}].name. Give each targeted evaluator "
-                            "a unique name."
+                            "and code function a unique name."
                         ),
                     }
                 )

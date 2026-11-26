@@ -1,0 +1,53 @@
+{
+  "name": "Invoice extraction with code functions",
+  "goal": "Extract the invoice number, line items and total from an invoice.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice_text": {"type": "string"}
+    },
+    "required": ["invoice_text"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice_id": {"type": "string"},
+      "line_items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "description": {"type": "string"},
+            "amount": {"type": "number"}
+          },
+          "required": ["description", "amount"]
+        }
+      },
+      "total": {"type": "number"}
+    },
+    "required": ["invoice_id", "line_items", "total"]
+  },
+  "evaluators": [
+    {
+      "kind": "exact_match",
+      "id": "invoice-id",
+      "name": "Invoice ID",
+      "field": "invoice_id"
+    },
+    {
+      "kind": "code_function",
+      "id": "line-items-sum",
+      "name": "Line items sum to total",
+      "sourceFile": "checks/line_items.py",
+      "weight": 2,
+      "required": true
+    },
+    {
+      "kind": "code_function",
+      "id": "positive-total",
+      "name": "Positive total",
+      "language": "javascript",
+      "source": "function score(row) {\n  return (row.output?.total ?? 0) > 0 ? 1 : 0\n}\n"
+    }
+  ]
+}
